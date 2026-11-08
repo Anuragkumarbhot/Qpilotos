@@ -43,7 +43,7 @@ const stage = query<HTMLDivElement>('#stage');
 const glCanvas = query<HTMLCanvasElement>('#glCanvas');
 const compositeCanvas = query<HTMLCanvasElement>('#compositeCanvas');
 const videoCutoutCanvas = query<HTMLCanvasElement>('#videoCutoutCanvas');
-const videoCutoutCtx = videoCutoutCanvas.getContext('2d');
+const videoCutoutCtx = videoCutoutCanvas.getContext('2d')!;
 const fileInput = query<HTMLInputElement>('#fileInput');
 const statusEl = query<HTMLParagraphElement>('#status');
 const playBtn = query<HTMLButtonElement>('#playBtn');
@@ -55,7 +55,6 @@ const aiCutoutInput = query<HTMLInputElement>('#aiCutoutInput');
 const aiCutoutBtn = query<HTMLButtonElement>('#aiCutoutBtn');
 const videoCutoutBtn = query<HTMLButtonElement>('#videoCutoutBtn');
 
-if (!videoCutoutCtx) throw new Error('2D canvas is unavailable.');
 
 let sourceObjectUrl: string | null = null;
 let foregroundObjectUrl: string | null = null;
