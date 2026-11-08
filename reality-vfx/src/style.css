@@ -49,3 +49,5 @@ footer { color:#718197; font-size:11px; line-height:1.6; padding:16px 2px; }
   .stage { aspect-ratio:4/3; min-height:230px; }
   header { align-items:flex-start; }
 }
+
+#arBtn{border-color:#80652b;background:linear-gradient(135deg,#3b321c,#1d2935);color:#ffe08a;font-weight:750}#arBtn:hover{background:linear-gradient(135deg,#514323,#26394c)}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #ffd45a;outline-offset:2px}@media(display-mode:standalone){.app{padding-top:max(14px,env(safe-area-inset-top));padding-bottom:max(14px,env(safe-area-inset-bottom))}}
