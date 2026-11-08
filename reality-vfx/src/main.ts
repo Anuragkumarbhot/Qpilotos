@@ -381,3 +381,7 @@ async function exportComposite() {
 }
 exportBtn.addEventListener('click', () => { void exportComposite(); });
 updateLabels();
+
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => { void navigator.serviceWorker.register('/sw.js').catch(error => console.warn('Service worker registration failed:', error)); });
+}
