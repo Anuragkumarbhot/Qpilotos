@@ -12,7 +12,7 @@ A browser-based compositing prototype for importing or recording footage, positi
 - Optional sampled video cutout: 2 fps, maximum 12-second source clip, 512 px maximum long edge.
 - Real-time WebM export where supported by the browser.
 - Installable PWA shell and offline app shell.
-- WebXR availability detection. Immersive AR is enabled only in compatible secure browser/device combinations; the standard editor remains available as a fallback.
+- Manual screen-space compositing fallback for browsers without native AR integration.
 
 ## Requirements
 
@@ -54,7 +54,7 @@ The app uses root-relative asset paths and is intended to be hosted at a domain 
 
 ## Known limitations
 
-This is a browser compositing prototype, not a finished native AR production system. The 3D subject is procedural placeholder geometry. Sampled video cutout is not full-frame-rate segmentation and can exhibit temporal mask jumps. Lighting presets affect only the virtual subject. Contact shadow is a visual approximation. WebM export support and performance vary by browser/device. WebXR hit-test support is not universal; iOS Safari generally uses the manual editor fallback.
+This is a browser compositing prototype, not a finished native AR production system. The 3D subject is procedural placeholder geometry. Sampled video cutout is not full-frame-rate segmentation and can exhibit temporal mask jumps. Lighting presets affect only the virtual subject. Contact shadow is a visual approximation. WebM export support and performance vary by browser/device. This build does not implement an immersive WebXR session; ARCore/ARKit world tracking is a separate native engineering phase.
 
 Production AR with stable world anchors, depth occlusion, camera pose recovery, robust relighting, and native camera pipelines requires platform-specific ARCore/ARKit integration and device testing. Those capabilities are not represented as complete in this browser app.
 
