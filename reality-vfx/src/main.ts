@@ -15,6 +15,7 @@ app.innerHTML = `
           <video id="sourceVideo" playsinline muted loop></video>
           <canvas id="glCanvas"></canvas>
           <canvas id="compositeCanvas"></canvas>
+          <img id="foregroundLayer" alt="Foreground cutout overlay" />
           <div class="empty"><strong>Your scene starts here</strong><span>Record a clip or import a video to add a 3D character.</span></div>
         </div>
         <div class="stage-actions">
@@ -39,8 +40,13 @@ app.innerHTML = `
         <div class="control"><label>Rotation <output id="rotOut">0°</output></label><input id="rotation" type="range" min="-180" max="180" step="1" value="0"></div>
         <div class="control"><label>Vertical position <output id="yOut">50%</output></label><input id="ypos" type="range" min="10" max="90" step="1" value="62"></div>
         <div class="control"><label>Horizontal position <output id="xOut">50%</output></label><input id="xpos" type="range" min="5" max="95" step="1" value="52"></div>
-        <div class="row"><button id="toggleObject">Hide object</button><button id="gridToggle">Show guides</button></div>
+        <div class="row"><button id="toggleObject">Hide object</button><button id="gridToggle">Show guides</button>
+          <label class="file-control">Foreground cutout<input id="foregroundInput" type="file" accept="image/png,image/webp" /></label></div>
         <div>
+          <p class="section-title">Cinematic look</p>
+          <select id="lighting"><option value="neutral">Neutral daylight</option><option value="warm">Warm sunset</option><option value="cool">Cool moonlight</option></select>
+          <div class="control"><label>Contact shadow <output id="shadowOut">45%</output></label><input id="shadow" type="range" min="0" max="90" value="45" /></div>
+          <p class="hint">Upload a transparent PNG/WebP cutout of foreground objects to layer them above the 3D subject.</p>
           <p class="section-title">Export</p>
           <button class="primary" id="exportBtn" disabled>Export composite video</button>
           <p class="status" id="status">Import or record a video to begin.</p>
@@ -60,9 +66,12 @@ const statusEl = document.querySelector<HTMLParagraphElement>('#status')!;
 const playBtn = document.querySelector<HTMLButtonElement>('#playBtn')!;
 const exportBtn = document.querySelector<HTMLButtonElement>('#exportBtn')!;
 const compositeCanvas = document.querySelector<HTMLCanvasElement>('#compositeCanvas')!;
+const foregroundLayer = document.querySelector<HTMLImageElement>('#foregroundLayer')!;
+const foregroundInput = document.querySelector<HTMLInputElement>('#foregroundInput')!;
 const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);
 const scene = new THREE.Scene();
 const camera = new THREE.OrthographicCamera(-5, 5, 3.125, -3.125, 0.1, 100);
 camera.position.set(0, 0, 20);
@@ -70,6 +79,17 @@ scene.add(new THREE.AmbientLight(0xffffff, 1.8));
 const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
 keyLight.position.set(-4, 7, 10);
 scene.add(keyLight);
+const shadowCanvas = document.createElement('canvas');
+shadowCanvas.width = 256; shadowCanvas.height = 128;
+const shadowCtx = shadowCanvas.getContext('2d')!;
+const shadowGradient = shadowCtx.createRadialGradient(128, 64, 4, 128, 64, 64);
+shadowGradient.addColorStop(0, 'rgba(0,0,0,0.55)');
+shadowGradient.addColorStop(0.55, 'rgba(0,0,0,0.22)');
+shadowGradient.addColorStop(1, 'rgba(0,0,0,0)');
+shadowCtx.fillStyle = shadowGradient; shadowCtx.fillRect(0, 0, 256, 128);
+const shadowTexture = new THREE.CanvasTexture(shadowCanvas);
+const contactShadow = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.15), new THREE.MeshBasicMaterial({ map: shadowTexture, transparent: true, depthWrite: false, opacity: 0.45 }));
+contactShadow.position.set(0, -1.38, -0.2); scene.add(contactShadow);
 const subjectGroup = new THREE.Group();
 scene.add(subjectGroup);
 let showObject = true;
@@ -156,6 +176,7 @@ function applyPosition() {
   const x = Number((document.querySelector<HTMLInputElement>('#xpos')!).value) / 100;
   const y = Number((document.querySelector<HTMLInputElement>('#ypos')!).value) / 100;
   subjectGroup.position.set((x - 0.5) * 9.6, (0.5 - y) * 5.8, 0);
+  contactShadow.position.set(subjectGroup.position.x, subjectGroup.position.y - 1.28, -0.2);
   subjectGroup.rotation.z = THREE.MathUtils.degToRad(Number((document.querySelector<HTMLInputElement>('#rotation')!).value));
   subjectGroup.visible = showObject;
 }
@@ -347,6 +368,7 @@ async function exportComposite() {
     }
     renderer.render(scene, camera);
     ctx.drawImage(glCanvas, 0, 0, w, h);
+    if (foregroundLayer.complete && foregroundLayer.naturalWidth) ctx.drawImage(foregroundLayer, 0, 0, w, h);
   };
   const stream = compositeCanvas.captureStream(30);
   const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
@@ -381,6 +403,28 @@ async function exportComposite() {
   window.setTimeout(stop, Math.max(1, duration) * 1000 + 500);
 }
 exportBtn.addEventListener('click', () => { void exportComposite(); });
+foregroundInput.addEventListener('change', () => {
+  const file = foregroundInput.files?.[0];
+  if (!file) return;
+  if (!['image/png', 'image/webp'].includes(file.type)) { setStatus('Use a transparent PNG or WebP cutout.'); return; }
+  if (foregroundLayer.src.startsWith('blob:')) URL.revokeObjectURL(foregroundLayer.src);
+  foregroundLayer.src = URL.createObjectURL(file);
+  foregroundLayer.style.display = 'block';
+  setStatus('Foreground cutout loaded above the 3D subject. Align it to your video before export.');
+});
+document.querySelector<HTMLSelectElement>('#lighting')!.addEventListener('change', e => {
+  const mode = (e.target as HTMLSelectElement).value;
+  if (mode === 'warm') { keyLight.color.set(0xffc17a); keyLight.intensity = 2.5; }
+  else if (mode === 'cool') { keyLight.color.set(0x9fc9ff); keyLight.intensity = 2.0; }
+  else { keyLight.color.set(0xffffff); keyLight.intensity = 2.2; }
+  setStatus('Virtual subject lighting preset changed. Source video color is unchanged.');
+});
+const shadowSlider = document.querySelector<HTMLInputElement>('#shadow')!;
+shadowSlider.addEventListener('input', () => {
+  const value = Number(shadowSlider.value) / 100;
+  (contactShadow.material as THREE.MeshBasicMaterial).opacity = value;
+  document.querySelector('#shadowOut')!.textContent = shadowSlider.value + '%';
+});
 updateLabels();
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
