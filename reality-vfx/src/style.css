@@ -56,3 +56,5 @@ footer { color:#718197; font-size:11px; line-height:1.6; padding:16px 2px; }
 .file-control{display:inline-flex;align-items:center;gap:8px;border:1px solid #344357;border-radius:12px;padding:11px 14px;background:#172334;color:#f7fbff;font-size:13px;cursor:pointer}
 .file-control input{display:none}
 #lighting{margin-bottom:10px}
+
+#aiCutoutBtn{width:100%;border-color:#6b5594;background:#29213d;color:#e6d8ff;font-weight:750}#aiCutoutBtn:disabled{opacity:.5}
