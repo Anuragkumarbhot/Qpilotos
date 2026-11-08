@@ -1,43 +1,44 @@
-# Reality VFX Studio (Prototype)
+# Reality VFX Studio
 
-A browser-based, mobile-friendly VFX prototype inspired by the supplied Simulon concept. It lets you record/import a video, place a procedural 3D object over the scene, adjust its position/scale/rotation, and export a composited video.
+Mobile-first video compositing and WebXR AR placement prototype.
 
-## Important scope
-
-This is a practical VFX compositing starter, **not** a replica of Simulon's proprietary Reality-Aware Rendering or generative scene reconstruction. It does not infer full 3D geometry, camera pose, lighting, speech semantics, or regenerate the original scene. The object is composited as a 3D overlay; manual placement is required.
-
-## Stack
-
-- Vite + TypeScript
-- Three.js for interactive 3D object rendering
-- HTML video/camera capture APIs
-- Canvas compositing and MediaRecorder export
+## Phase 2 capabilities
+- Responsive web editor for desktop and mobile.
+- Installable PWA shell (Add to Home Screen on supported browsers).
+- WebXR immersive AR entry point with hit-test surface detection.
+- Tap the detected surface to place the procedural 3D subject in the AR session.
+- Non-WebXR browsers retain the manual 2D compositing editor.
+- Offline shell caching for the app entry point and static public assets.
 
 ## Run locally
-
 ```bash
 cd reality-vfx
 npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-Open the Vite URL on desktop or Android Chrome. Camera access requires HTTPS or localhost and user permission.
+Open the printed localhost URL. Camera and immersive AR features require a secure context (HTTPS or localhost).
 
-## Prototype workflow
+## Test AR on Android
+1. Use a supported ARCore-compatible Android device.
+2. Open the deployed site in a WebXR-compatible browser (typically Chrome) over HTTPS.
+3. Grant camera permission and install/update Google Play Services for AR if prompted.
+4. Tap **Start AR**, move the phone to scan a horizontal surface, then tap to place the subject.
 
-1. Record using the camera or select a video file.
-2. Add a procedural dinosaur/creature placeholder.
-3. Drag the object in the preview and adjust scale, rotation, and height.
-4. Play the source video and capture the composite to WebM.
+WebXR immersive AR support varies by device, browser, browser flags, and AR services. The app checks support and reports when immersive AR is unavailable.
+
+## Install as an app
+Deploy the reality-vfx folder as a static Vite site over HTTPS. In Chrome on Android, use the browser menu and choose **Install app** or **Add to Home screen**. The PWA is a web app wrapper; it is not a signed native APK.
+
+## Important limitations
+This phase adds hit-test plane placement, not full world understanding. It does not yet implement persistent anchors, camera pose recording, depth-based real-world occlusion, semantic object segmentation, relighting, automatic shadows, or generative video-to-video scene reconstruction. On iOS Safari, immersive WebXR AR is generally unavailable; use the responsive web editor fallback.
 
 ## Next engineering phases
-
-1. Add automatic subject/plane detection (MediaPipe Tasks / segmentation).
-2. Add camera motion tracking (visual odometry / SLAM) and world anchoring.
-3. Estimate lighting and shadows; use shadow catcher and environment maps.
-4. Add speech/action understanding and scene-edit prompts.
-5. Integrate a hosted video-to-video diffusion or 3D reconstruction backend when a suitable model/API and GPU budget are available.
+1. Persistent world anchors and plane classification.
+2. Depth sensing and occlusion using supported AR APIs.
+3. Subject segmentation and shadow/lighting estimation.
+4. Native Android ARCore application packaging and iOS ARKit application.
+5. Secure GPU-backed AI scene understanding and generative rendering services.
 
 ## Privacy
-
-Camera frames are processed locally in the browser in this prototype. Do not upload private footage to third-party services without explicit consent.
+Camera frames are handled locally in this prototype. The app does not upload footage to an AI service.
