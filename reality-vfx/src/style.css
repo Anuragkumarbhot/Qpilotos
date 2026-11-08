@@ -51,3 +51,8 @@ footer { color:#718197; font-size:11px; line-height:1.6; padding:16px 2px; }
 }
 
 #arBtn{border-color:#80652b;background:linear-gradient(135deg,#3b321c,#1d2935);color:#ffe08a;font-weight:750}#arBtn:hover{background:linear-gradient(135deg,#514323,#26394c)}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #ffd45a;outline-offset:2px}@media(display-mode:standalone){.app{padding-top:max(14px,env(safe-area-inset-top));padding-bottom:max(14px,env(safe-area-inset-bottom))}}
+#foregroundLayer{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;display:none;z-index:3}
+#glCanvas{z-index:2}
+.file-control{display:inline-flex;align-items:center;gap:8px;border:1px solid #344357;border-radius:12px;padding:11px 14px;background:#172334;color:#f7fbff;font-size:13px;cursor:pointer}
+.file-control input{display:none}
+#lighting{margin-bottom:10px}
