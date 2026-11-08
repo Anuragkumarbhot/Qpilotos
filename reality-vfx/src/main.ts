@@ -16,6 +16,7 @@ app.innerHTML = `
           <video id="sourceVideo" playsinline muted loop></video>
           <canvas id="glCanvas"></canvas>
           <canvas id="compositeCanvas"></canvas>
+          <canvas id="videoCutoutCanvas"></canvas>
           <img id="foregroundLayer" alt="Foreground cutout overlay" />
           <div class="empty"><strong>Your scene starts here</strong><span>Record a clip or import a video to add a 3D character.</span></div>
         </div>
@@ -44,7 +45,8 @@ app.innerHTML = `
         <div class="row"><button id="toggleObject">Hide object</button><button id="gridToggle">Show guides</button>
           <label class="file-control">Foreground cutout<input id="foregroundInput" type="file" accept="image/png,image/webp" /></label>
           <label class="file-control">AI image cutout<input id="aiCutoutInput" type="file" accept="image/*" /></label>
-          <button id="aiCutoutBtn" disabled>AI remove background</button></div>
+          <button id="aiCutoutBtn" disabled>AI remove background</button>
+          <button id="videoCutoutBtn" disabled>AI video cutout (12 sec)</button></div>
         <div>
           <p class="section-title">Cinematic look</p>
           <select id="lighting"><option value="neutral">Neutral daylight</option><option value="warm">Warm sunset</option><option value="cool">Cool moonlight</option></select>
@@ -69,6 +71,11 @@ const statusEl = document.querySelector<HTMLParagraphElement>('#status')!;
 const playBtn = document.querySelector<HTMLButtonElement>('#playBtn')!;
 const exportBtn = document.querySelector<HTMLButtonElement>('#exportBtn')!;
 const compositeCanvas = document.querySelector<HTMLCanvasElement>('#compositeCanvas')!;
+const videoCutoutCanvas = document.querySelector<HTMLCanvasElement>('#videoCutoutCanvas')!;
+const videoCutoutBtn = document.querySelector<HTMLButtonElement>('#videoCutoutBtn')!;
+const videoCutoutCtx = videoCutoutCanvas.getContext('2d')!;
+const videoCutoutFrames: Array<{ time: number; bitmap: ImageBitmap }> = [];
+let videoCutoutReady = false;
 const foregroundLayer = document.querySelector<HTMLImageElement>('#foregroundLayer')!;
 const foregroundInput = document.querySelector<HTMLInputElement>('#foregroundInput')!;
 const aiCutoutInput = document.querySelector<HTMLInputElement>('#aiCutoutInput')!;
@@ -196,6 +203,7 @@ function resize() {
   camera.bottom = -camera.top;
   camera.updateProjectionMatrix();
   compositeCanvas.width = w; compositeCanvas.height = h;
+  videoCutoutCanvas.width = w; videoCutoutCanvas.height = h;
 }
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local');
@@ -250,6 +258,10 @@ function setVideoSource(url: string) {
   void video.play().catch(() => {});
   playBtn.disabled = false;
   exportBtn.disabled = false;
+  videoCutoutBtn.disabled = false;
+  videoCutoutReady = false;
+  videoCutoutFrames.forEach(frame => frame.bitmap.close()); videoCutoutFrames.length = 0;
+  videoCutoutCtx.clearRect(0, 0, videoCutoutCanvas.width, videoCutoutCanvas.height);
   setStatus('Video loaded. Position your 3D subject and export.');
 }
 document.querySelector('#importBtn')!.addEventListener('click', () => fileInput.click());
@@ -295,6 +307,7 @@ playBtn.addEventListener('click', async () => {
 });
 video.addEventListener('pause', () => { playBtn.textContent = '▶ Play'; });
 video.addEventListener('play', () => { playBtn.textContent = 'Ⅱ Pause'; });
+video.addEventListener('timeupdate', renderVideoCutoutPreview);
 document.querySelector('#resetBtn')!.addEventListener('click', () => {
   (document.querySelector<HTMLInputElement>('#scale')!).value = '1';
   (document.querySelector<HTMLInputElement>('#rotation')!).value = '0';
@@ -326,6 +339,79 @@ document.querySelector('#gridToggle')!.addEventListener('click', e => {
   setStatus(showGuides ? 'Guides enabled conceptually; use the sliders for manual alignment.' : 'Guides hidden.');
 });
 
+function drawContainedImage(ctx: CanvasRenderingContext2D, image: CanvasImageSource, sourceWidth: number, sourceHeight: number, width: number, height: number) {
+  const scale = Math.min(width / sourceWidth, height / sourceHeight);
+  const drawWidth = sourceWidth * scale, drawHeight = sourceHeight * scale;
+  ctx.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+}
+function renderVideoCutoutPreview() {
+  const w = videoCutoutCanvas.width, h = videoCutoutCanvas.height;
+  videoCutoutCtx.clearRect(0, 0, w, h);
+  if (!videoCutoutReady || !videoCutoutFrames.length) return;
+  let frame = videoCutoutFrames[0];
+  for (const candidate of videoCutoutFrames) {
+    if (candidate.time <= video.currentTime) frame = candidate;
+    else break;
+  }
+  drawContainedImage(videoCutoutCtx, frame.bitmap, frame.bitmap.width, frame.bitmap.height, w, h);
+}
+async function processVideoCutout() {
+  if (!video.src || !Number.isFinite(video.duration) || video.duration <= 0) {
+    setStatus('Import a finite-duration video before running video cutout.');
+    return;
+  }
+  if (video.duration > 12) {
+    setStatus('For mobile performance, trim the clip to 12 seconds or less and import it again.');
+    return;
+  }
+  const wasPaused = video.paused;
+  const previousTime = video.currentTime;
+  const frameRate = 2;
+  const count = Math.max(1, Math.ceil(video.duration * frameRate));
+  const frames: Array<{ time: number; bitmap: ImageBitmap }> = [];
+  videoCutoutBtn.disabled = true;
+  videoCutoutBtn.textContent = 'AI video processing…';
+  video.pause();
+  try {
+    const workCanvas = document.createElement('canvas');
+    const workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
+    if (!workCtx) throw new Error('Canvas processing is unavailable.');
+    for (let index = 0; index < count; index++) {
+      const time = Math.min(index / frameRate, Math.max(0, video.duration - 0.04));
+      video.currentTime = time;
+      await new Promise<void>((resolve, reject) => {
+        const onSeeked = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new Error('Could not decode a video frame.')); };
+        const cleanup = () => { video.removeEventListener('seeked', onSeeked); video.removeEventListener('error', onError); };
+        video.addEventListener('seeked', onSeeked, { once: true });
+        video.addEventListener('error', onError, { once: true });
+      });
+      const factor = Math.min(1, 512 / Math.max(video.videoWidth, video.videoHeight));
+      workCanvas.width = Math.max(1, Math.round(video.videoWidth * factor));
+      workCanvas.height = Math.max(1, Math.round(video.videoHeight * factor));
+      workCtx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
+      const sourceBlob = await new Promise<Blob>((resolve, reject) => workCanvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Could not encode a video frame.')), 'image/jpeg', 0.88));
+      const cutoutBlob = await removeBackground(sourceBlob, { model: 'isnet_fp16', output: { format: 'image/png' } });
+      const bitmap = await createImageBitmap(cutoutBlob);
+      frames.push({ time, bitmap });
+      setStatus('AI video cutout: ' + (index + 1) + ' / ' + count + ' frames processed (' + Math.round((index + 1) / count * 100) + '%).');
+    }
+    videoCutoutFrames.forEach(frame => frame.bitmap.close());
+    videoCutoutFrames.splice(0, videoCutoutFrames.length, ...frames);
+    videoCutoutReady = true;
+    renderVideoCutoutPreview();
+    setStatus('Video foreground cutout ready: ' + frames.length + ' sampled frames at 2 fps. Preview and export will composite the extracted subject.');
+  } catch (error) {
+    frames.forEach(frame => frame.bitmap.close());
+    setStatus(error instanceof Error ? 'Video cutout failed: ' + error.message : 'Video cutout failed.');
+  } finally {
+    video.currentTime = previousTime;
+    if (!wasPaused) await video.play().catch(() => {});
+    videoCutoutBtn.disabled = false;
+    videoCutoutBtn.textContent = 'AI video cutout (12 sec)';
+  }
+}
+videoCutoutBtn.addEventListener('click', () => { void processVideoCutout(); });
 function pointerToWorld(clientX: number, clientY: number) {
   const rect = glCanvas.getBoundingClientRect();
   const x = ((clientX - rect.left) / rect.width - 0.5) * 10;
@@ -375,6 +461,11 @@ async function exportComposite() {
     renderer.render(scene, camera);
     ctx.drawImage(glCanvas, 0, 0, w, h);
     if (foregroundLayer.complete && foregroundLayer.naturalWidth) ctx.drawImage(foregroundLayer, 0, 0, w, h);
+    if (videoCutoutReady && videoCutoutFrames.length) {
+      let frame = videoCutoutFrames[0];
+      for (const candidate of videoCutoutFrames) { if (candidate.time <= video.currentTime) frame = candidate; else break; }
+      drawContainedImage(ctx, frame.bitmap, frame.bitmap.width, frame.bitmap.height, w, h);
+    }
   };
   const stream = compositeCanvas.captureStream(30);
   const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
