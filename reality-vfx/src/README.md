@@ -8,7 +8,7 @@
 
 The browser client does not contain credentials or call a private backend. Imported footage remains local to the browser. The IMG.LY package downloads segmentation model assets as needed.
 
-The WebXR control is capability-gated. It must not be interpreted as a replacement for a native ARCore/ARKit implementation. Production world tracking, persistent anchors, depth occlusion, and camera pose recovery require device-specific implementation and physical-device validation.
+This build does not expose an immersive WebXR session. Production world tracking, persistent anchors, depth occlusion, and camera pose recovery require device-specific ARCore/ARKit implementation and physical-device validation.
 
 ## Before a commercial release
 
