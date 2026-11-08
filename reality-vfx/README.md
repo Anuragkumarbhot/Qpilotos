@@ -55,3 +55,12 @@ Camera frames are handled locally in this prototype. The app does not upload foo
 4. Adjust the contact-shadow strength and virtual lighting preset, then export.
 
 These are manual compositing aids, not automatic AI segmentation or depth estimation. Lighting presets affect the virtual 3D subject only; they do not relight the source footage. The contact shadow is a procedural 2D approximation, not a physically reconstructed shadow.
+
+## Phase 4: browser AI image cutout
+- Select a still image (up to 12 MB) and run **AI remove background**.
+- The browser loads the ISNet FP16 segmentation model and generates a transparent PNG cutout.
+- The generated cutout is automatically placed in the foreground layer above the 3D subject and included in export.
+- AI inference runs client-side; the selected source image is not uploaded to a Reality VFX backend. First model download requires internet access and may be large; later runs may benefit from browser caching.
+
+### Scope and limitations
+This feature performs image-level foreground extraction, not video frame segmentation. It does not track moving subjects, create temporally consistent masks, infer scene depth, or generate new video. Processing speed and memory use depend on device capability. Manual transparent PNG/WebP import remains available as a fallback.
