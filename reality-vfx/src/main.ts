@@ -3,555 +3,682 @@ import * as THREE from 'three';
 import { removeBackground } from '@imgly/background-removal';
 import './style.css';
 
-const app = document.querySelector<HTMLDivElement>('#app')!;
-app.innerHTML = `
-  <main class="app">
-    <header>
-      <div class="brand"><div class="logo">R</div><div><h1>Reality VFX Studio</h1><div class="sub">Mobile-first video compositing prototype</div></div></div>
-      <span class="pill">AR TRACKING · PWA</span>
-    </header>
-    <div class="layout">
-      <section class="panel">
-        <div class="stage" id="stage">
-          <video id="sourceVideo" playsinline muted loop></video>
-          <canvas id="glCanvas"></canvas>
-          <canvas id="compositeCanvas"></canvas>
-          <canvas id="videoCutoutCanvas"></canvas>
-          <img id="foregroundLayer" alt="Foreground cutout overlay" />
-          <div class="empty"><strong>Your scene starts here</strong><span>Record a clip or import a video to add a 3D character.</span></div>
-        </div>
-        <div class="stage-actions">
-          <button class="primary" id="recordBtn">● Record camera</button><button id="arBtn">◎ Start AR</button>
-          <button id="importBtn">Import video</button>
-          <button id="playBtn" disabled>▶ Play</button>
-          <button id="resetBtn">Reset object</button>
-          <input id="fileInput" type="file" accept="video/*" />
-        </div>
-        <p class="hint">Tip: drag the 3D object inside the preview to position it. Use the sliders to adjust depth-like size and orientation.</p>
-      </section>
-      <aside class="panel controls">
-        <div>
-          <p class="section-title">3D subject</p>
-          <select id="subject">
-            <option value="dino">Tiny dinosaur</option>
-            <option value="elephant">Elephant placeholder</option>
-            <option value="robot">Sci-fi robot placeholder</option>
-          </select>
-        </div>
-        <div class="control"><label>Scale <output id="scaleOut">1.0×</output></label><input id="scale" type="range" min="0.35" max="2.5" step="0.05" value="1"></div>
-        <div class="control"><label>Rotation <output id="rotOut">0°</output></label><input id="rotation" type="range" min="-180" max="180" step="1" value="0"></div>
-        <div class="control"><label>Vertical position <output id="yOut">50%</output></label><input id="ypos" type="range" min="10" max="90" step="1" value="62"></div>
-        <div class="control"><label>Horizontal position <output id="xOut">50%</output></label><input id="xpos" type="range" min="5" max="95" step="1" value="52"></div>
-        <div class="row"><button id="toggleObject">Hide object</button><button id="gridToggle">Show guides</button>
-          <label class="file-control">Foreground cutout<input id="foregroundInput" type="file" accept="image/png,image/webp" /></label>
-          <label class="file-control">AI image cutout<input id="aiCutoutInput" type="file" accept="image/*" /></label>
-          <button id="aiCutoutBtn" disabled>AI remove background</button>
-          <button id="videoCutoutBtn" disabled>AI video cutout (12 sec)</button></div>
-        <div>
-          <p class="section-title">Cinematic look</p>
-          <select id="lighting"><option value="neutral">Neutral daylight</option><option value="warm">Warm sunset</option><option value="cool">Cool moonlight</option></select>
-          <div class="control"><label>Contact shadow <output id="shadowOut">45%</output></label><input id="shadow" type="range" min="0" max="90" value="45" /></div>
-          <p class="hint">Upload a transparent PNG/WebP cutout of foreground objects to layer them above the 3D subject.</p>
-          <p class="section-title">Export</p>
-          <button class="primary" id="exportBtn" disabled>Export composite video</button>
-          <p class="status" id="status">Import or record a video to begin.</p>
-          <p class="hint">Exports WebM where supported by your browser. Use Chrome on Android or desktop. Camera access needs HTTPS or localhost.</p>
-        </div>
-      </aside>
-    </div>
-    <footer>AR mode uses WebXR hit-test plane detection where supported. Other browsers use the 2D editor fallback. This phase does not provide semantic scene reconstruction, automatic occlusion masks, or generative video.</footer>
-  </main>
-`;
+const MAX_VIDEO_BYTES = 250 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
+const MAX_AI_CLIP_SECONDS = 12;
+const AI_SAMPLE_FPS = 2;
+const AI_MAX_EDGE = 512;
 
-const video = document.querySelector<HTMLVideoElement>('#sourceVideo')!;
-const glCanvas = document.querySelector<HTMLCanvasElement>('#glCanvas')!;
-const stage = document.querySelector<HTMLDivElement>('#stage')!;
-const fileInput = document.querySelector<HTMLInputElement>('#fileInput')!;
-const statusEl = document.querySelector<HTMLParagraphElement>('#status')!;
-const playBtn = document.querySelector<HTMLButtonElement>('#playBtn')!;
-const exportBtn = document.querySelector<HTMLButtonElement>('#exportBtn')!;
-const compositeCanvas = document.querySelector<HTMLCanvasElement>('#compositeCanvas')!;
-const videoCutoutCanvas = document.querySelector<HTMLCanvasElement>('#videoCutoutCanvas')!;
-const videoCutoutBtn = document.querySelector<HTMLButtonElement>('#videoCutoutBtn')!;
-const videoCutoutCtx = videoCutoutCanvas.getContext('2d')!;
-const videoCutoutFrames: Array<{ time: number; bitmap: ImageBitmap }> = [];
+const app = document.querySelector<HTMLDivElement>('#app');
+if (!app) throw new Error('Application root #app was not found.');
+
+app.innerHTML = [
+  '<main class="app">',
+  '<header><div class="brand"><div class="logo" aria-hidden="true">R</div><div><h1>Reality VFX Studio</h1><div class="sub">Browser-based compositing workspace</div></div></div><span class="pill">LOCAL MEDIA WORKFLOW</span></header>',
+  '<div class="layout"><section class="panel editor-panel">',
+  '<div class="stage" id="stage"><video id="sourceVideo" playsinline muted></video><canvas id="glCanvas" aria-label="3D subject preview"></canvas><canvas id="compositeCanvas"></canvas><canvas id="videoCutoutCanvas"></canvas><img id="foregroundLayer" alt="Foreground cutout overlay" /><div class="empty"><strong>Your scene starts here</strong><span>Record a clip or import a video to begin compositing.</span></div></div>',
+  '<div class="stage-actions"><button class="primary" id="recordBtn">● Record camera</button><button id="importBtn">Import video</button><button id="playBtn" disabled>▶ Play</button><button id="resetBtn">Reset subject</button><input id="fileInput" type="file" accept="video/*" /></div>',
+  '<p class="hint">Drag the subject in the preview to reposition it. Camera and microphone access require HTTPS or localhost.</p>',
+  '</section><aside class="panel controls">',
+  '<section><p class="section-title">3D subject</p><select id="subject" aria-label="Select 3D subject"><option value="dino">Tiny dinosaur</option><option value="robot">Sci-fi robot</option><option value="orb">Energy orb</option></select></section>',
+  '<div class="control"><label for="scale">Scale <output id="scaleOut">1.00×</output></label><input id="scale" type="range" min="0.35" max="2.5" step="0.05" value="1" /></div>',
+  '<div class="control"><label for="rotation">Rotation <output id="rotOut">0°</output></label><input id="rotation" type="range" min="-180" max="180" step="1" value="0" /></div>',
+  '<div class="control"><label for="xpos">Horizontal position <output id="xOut">52%</output></label><input id="xpos" type="range" min="5" max="95" step="1" value="52" /></div>',
+  '<div class="control"><label for="ypos">Vertical position <output id="yOut">62%</output></label><input id="ypos" type="range" min="10" max="90" step="1" value="62" /></div>',
+  '<div class="row"><button id="toggleObject">Hide subject</button><label class="file-control">Foreground PNG/WebP<input id="foregroundInput" type="file" accept="image/png,image/webp" /></label></div>',
+  '<section><p class="section-title">AI foreground extraction</p><label class="file-control full">Select image<input id="aiCutoutInput" type="file" accept="image/*" /></label><button id="aiCutoutBtn" class="full" disabled>AI remove image background</button><button id="videoCutoutBtn" class="full" disabled>AI video cutout (12 sec max)</button><p class="hint">AI inference runs in this browser. First use downloads model assets and may require substantial memory.</p></section>',
+  '<section><p class="section-title">Virtual lighting</p><select id="lighting" aria-label="Lighting preset"><option value="neutral">Neutral daylight</option><option value="warm">Warm sunset</option><option value="cool">Cool moonlight</option></select><div class="control"><label for="shadow">Contact shadow <output id="shadowOut">45%</output></label><input id="shadow" type="range" min="0" max="90" value="45" /></div></section>',
+  '<section><p class="section-title">Export</p><button class="primary full" id="exportBtn" disabled>Export WebM composite</button><p class="status" id="status" role="status" aria-live="polite">Import or record a video to begin.</p><p class="hint">Export is real-time WebM. Browser codec support and device performance vary.</p></section>',
+  '</aside></div><footer>Reality VFX is a browser compositing prototype. AI video cutout samples frames at 2 fps; it is not full-frame-rate temporal segmentation. WebXR world tracking and depth-aware occlusion are not included in this editor build.</footer></main>'
+].join('');
+
+const query = <T extends HTMLElement>(selector: string): T => {
+  const element = document.querySelector<T>(selector);
+  if (!element) throw new Error('Required UI element missing: ' + selector);
+  return element;
+};
+
+const video = query<HTMLVideoElement>('#sourceVideo');
+const stage = query<HTMLDivElement>('#stage');
+const glCanvas = query<HTMLCanvasElement>('#glCanvas');
+const compositeCanvas = query<HTMLCanvasElement>('#compositeCanvas');
+const videoCutoutCanvas = query<HTMLCanvasElement>('#videoCutoutCanvas');
+const videoCutoutCtx = videoCutoutCanvas.getContext('2d');
+const fileInput = query<HTMLInputElement>('#fileInput');
+const statusEl = query<HTMLParagraphElement>('#status');
+const playBtn = query<HTMLButtonElement>('#playBtn');
+const exportBtn = query<HTMLButtonElement>('#exportBtn');
+const recordBtn = query<HTMLButtonElement>('#recordBtn');
+const foregroundLayer = query<HTMLImageElement>('#foregroundLayer');
+const foregroundInput = query<HTMLInputElement>('#foregroundInput');
+const aiCutoutInput = query<HTMLInputElement>('#aiCutoutInput');
+const aiCutoutBtn = query<HTMLButtonElement>('#aiCutoutBtn');
+const videoCutoutBtn = query<HTMLButtonElement>('#videoCutoutBtn');
+
+if (!videoCutoutCtx) throw new Error('2D canvas is unavailable.');
+
+let sourceObjectUrl: string | null = null;
+let foregroundObjectUrl: string | null = null;
+let cameraStream: MediaStream | null = null;
+let recorder: MediaRecorder | null = null;
+let recordingChunks: Blob[] = [];
+let selectedAiImage: File | null = null;
+let showSubject = true;
+let dragPointer: number | null = null;
+let videoCutoutFrames: Array<{ time: number; bitmap: ImageBitmap }> = [];
 let videoCutoutReady = false;
-const foregroundLayer = document.querySelector<HTMLImageElement>('#foregroundLayer')!;
-const foregroundInput = document.querySelector<HTMLInputElement>('#foregroundInput')!;
-const aiCutoutInput = document.querySelector<HTMLInputElement>('#aiCutoutInput')!;
-const aiCutoutBtn = document.querySelector<HTMLButtonElement>('#aiCutoutBtn')!;
-let aiCutoutFile: File | null = null;
-const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+let exportStop: (() => void) | null = null;
+
+const renderer = new THREE.WebGLRenderer({
+  canvas: glCanvas,
+  alpha: true,
+  antialias: true,
+  powerPreference: 'high-performance'
+});
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.setClearColor(0x000000, 0);
+
 const scene = new THREE.Scene();
 const camera = new THREE.OrthographicCamera(-5, 5, 3.125, -3.125, 0.1, 100);
 camera.position.set(0, 0, 20);
-scene.add(new THREE.AmbientLight(0xffffff, 1.8));
-const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+scene.add(new THREE.AmbientLight(0xffffff, 1.7));
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.1);
 keyLight.position.set(-4, 7, 10);
 scene.add(keyLight);
-const shadowCanvas = document.createElement('canvas');
-shadowCanvas.width = 256; shadowCanvas.height = 128;
-const shadowCtx = shadowCanvas.getContext('2d')!;
-const shadowGradient = shadowCtx.createRadialGradient(128, 64, 4, 128, 64, 64);
-shadowGradient.addColorStop(0, 'rgba(0,0,0,0.55)');
-shadowGradient.addColorStop(0.55, 'rgba(0,0,0,0.22)');
-shadowGradient.addColorStop(1, 'rgba(0,0,0,0)');
-shadowCtx.fillStyle = shadowGradient; shadowCtx.fillRect(0, 0, 256, 128);
-const shadowTexture = new THREE.CanvasTexture(shadowCanvas);
-const contactShadow = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.15), new THREE.MeshBasicMaterial({ map: shadowTexture, transparent: true, depthWrite: false, opacity: 0.45 }));
-contactShadow.position.set(0, -1.38, -0.2); scene.add(contactShadow);
-const subjectGroup = new THREE.Group();
-scene.add(subjectGroup);
-let showObject = true;
-let showGuides = false;
-let mediaStream: MediaStream | null = null;
-let recordingChunks: Blob[] = [];
-let recorder: MediaRecorder | null = null;
-let dragPointer: number | null = null;
-let xrHitTestSource: XRHitTestSource | null = null;
-let xrReferenceSpace: XRReferenceSpace | null = null;
-let arPlaced = false;
-const arBtn = document.querySelector<HTMLButtonElement>('#arBtn')!;
-const reticle = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.17, 32), new THREE.MeshBasicMaterial({ color: 0xffd45a, side: THREE.DoubleSide }));
-reticle.rotation.x = -Math.PI / 2;
-reticle.matrixAutoUpdate = false;
-reticle.visible = false;
-scene.add(reticle);
 
-function material(color: number, roughness = 0.8) {
-  return new THREE.MeshStandardMaterial({ color, roughness });
+const subject = new THREE.Group();
+scene.add(subject);
+
+const shadowCanvas = document.createElement('canvas');
+shadowCanvas.width = 256;
+shadowCanvas.height = 128;
+const shadowContext = shadowCanvas.getContext('2d');
+if (shadowContext) {
+  const gradient = shadowContext.createRadialGradient(128, 64, 4, 128, 64, 64);
+  gradient.addColorStop(0, 'rgba(0,0,0,0.55)');
+  gradient.addColorStop(0.55, 'rgba(0,0,0,0.2)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0)');
+  shadowContext.fillStyle = gradient;
+  shadowContext.fillRect(0, 0, 256, 128);
 }
-function mesh(geometry: THREE.BufferGeometry, color: number, x: number, y: number, z = 0) {
-  const m = new THREE.Mesh(geometry, material(color));
-  m.position.set(x, y, z);
-  subjectGroup.add(m);
-  return m;
+const shadowTexture = new THREE.CanvasTexture(shadowCanvas);
+const contactShadow = new THREE.Mesh(
+  new THREE.PlaneGeometry(2.8, 1.15),
+  new THREE.MeshBasicMaterial({ map: shadowTexture, transparent: true, depthWrite: false, opacity: 0.45 })
+);
+contactShadow.position.set(0, -1.38, -0.2);
+scene.add(contactShadow);
+
+function setStatus(message: string): void {
+  statusEl.textContent = message;
 }
-function clearSubject() {
-  subjectGroup.traverse(obj => {
-    if (obj instanceof THREE.Mesh) {
-      obj.geometry.dispose();
-      const mat = obj.material;
-      if (Array.isArray(mat)) mat.forEach(v => v.dispose()); else mat.dispose();
-    }
+
+function makeMesh(geometry: THREE.BufferGeometry, color: number, x: number, y: number, z = 0): THREE.Mesh {
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, roughness: 0.72 }));
+  mesh.position.set(x, y, z);
+  subject.add(mesh);
+  return mesh;
+}
+
+function clearSubject(): void {
+  subject.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    object.geometry.dispose();
+    const material = object.material;
+    if (Array.isArray(material)) material.forEach((item) => item.dispose());
+    else material.dispose();
   });
-  subjectGroup.clear();
+  subject.clear();
 }
-function addDino() {
-  const green = 0x74bc61, dark = 0x397d4e, belly = 0xc7d98a;
-  mesh(new THREE.SphereGeometry(0.78, 24, 18), green, 0, 0, 0); // torso
-  const head = mesh(new THREE.SphereGeometry(0.48, 24, 18), green, 0.65, 0.63, 0.1);
-  head.scale.set(1.18, 0.82, 0.85);
-  mesh(new THREE.SphereGeometry(0.12, 16, 12), 0xffffff, 0.96, 0.76, 0.48);
-  mesh(new THREE.SphereGeometry(0.055, 12, 10), 0x101820, 1.0, 0.76, 0.58);
-  mesh(new THREE.ConeGeometry(0.22, 0.6, 12), dark, -0.8, -0.12, 0).rotation.z = Math.PI / 2;
-  mesh(new THREE.SphereGeometry(0.28, 16, 12), belly, 0.18, -0.15, 0.48).scale.set(1.1, 1.4, 0.35);
-  for (const x of [-0.42, 0.42]) {
-    const leg = mesh(new THREE.CapsuleGeometry(0.16, 0.48, 5, 10), dark, x, -0.82, 0);
-    leg.rotation.z = x < 0 ? -0.15 : 0.15;
-    mesh(new THREE.SphereGeometry(0.2, 14, 10), dark, x + 0.05, -1.13, 0.05).scale.set(1.3, 0.6, 1);
-  }
-  for (let i = 0; i < 3; i++) mesh(new THREE.ConeGeometry(0.18, 0.38, 10), 0xe3a64b, -0.25 + i * 0.35, 0.7 + (i % 2) * 0.12, 0).rotation.z = -0.2;
-}
-function addElephant() {
-  const grey = 0x8996a4;
-  mesh(new THREE.SphereGeometry(0.85, 24, 18), grey, 0, 0, 0);
-  mesh(new THREE.SphereGeometry(0.6, 24, 18), grey, 0.62, 0.35, 0.05);
-  for (const x of [-0.65, 0.65]) mesh(new THREE.SphereGeometry(0.44, 18, 14), 0x6f7d8c, 0.62 + x * 0.65, 0.4, -0.12).scale.set(0.5, 1, 0.22);
-  const trunk = mesh(new THREE.CapsuleGeometry(0.18, 0.58, 6, 14), grey, 1.04, -0.2, 0.1);
-  trunk.rotation.z = -0.22;
-  for (const x of [-0.48, 0.48]) mesh(new THREE.CapsuleGeometry(0.17, 0.65, 5, 12), grey, x, -0.9, 0);
-  for (const x of [0.82, 1.13]) mesh(new THREE.ConeGeometry(0.09, 0.55, 12), 0xf0e6c9, x, -0.42, 0.2).rotation.z = 0.2;
-}
-function addRobot() {
-  const blue = 0x4ba5d8, dark = 0x34465d;
-  const body = mesh(new THREE.BoxGeometry(1.25, 1.15, 0.65), dark, 0, 0, 0);
-  body.rotation.z = -0.05;
-  mesh(new THREE.BoxGeometry(1.05, 0.72, 0.6), blue, 0, 0.92, 0);
-  for (const x of [-0.26, 0.26]) mesh(new THREE.SphereGeometry(0.11, 16, 12), 0xffdb69, x, 1.0, 0.36);
-  for (const x of [-0.42, 0.42]) mesh(new THREE.CapsuleGeometry(0.16, 0.6, 5, 10), blue, x, -0.9, 0);
-  mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.48), blue, 0, 1.52, 0);
-  mesh(new THREE.SphereGeometry(0.11), 0xff6d5f, 0, 1.79, 0);
-}
-function buildSubject(type: string) {
+
+function buildSubject(kind: string): void {
   clearSubject();
-  if (type === 'elephant') addElephant();
-  else if (type === 'robot') addRobot();
-  else addDino();
-  subjectGroup.scale.setScalar(Number((document.querySelector<HTMLInputElement>('#scale')!).value));
+  if (kind === 'robot') {
+    makeMesh(new THREE.BoxGeometry(1.15, 1.3, 0.8), 0x8ba6c4, 0, 0, 0);
+    makeMesh(new THREE.BoxGeometry(0.9, 0.55, 0.72), 0x344f70, 0, 0.95, 0);
+    makeMesh(new THREE.SphereGeometry(0.12, 16, 12), 0x62e6ff, -0.22, 1.02, 0.4);
+    makeMesh(new THREE.SphereGeometry(0.12, 16, 12), 0x62e6ff, 0.22, 1.02, 0.4);
+    makeMesh(new THREE.BoxGeometry(0.25, 0.9, 0.35), 0x607a98, -0.55, -0.85, 0);
+    makeMesh(new THREE.BoxGeometry(0.25, 0.9, 0.35), 0x607a98, 0.55, -0.85, 0);
+  } else if (kind === 'orb') {
+    const orb = makeMesh(new THREE.SphereGeometry(0.95, 48, 32), 0x65cfff, 0, 0, 0);
+    (orb.material as THREE.MeshStandardMaterial).metalness = 0.55;
+    (orb.material as THREE.MeshStandardMaterial).roughness = 0.18;
+    makeMesh(new THREE.TorusGeometry(1.25, 0.035, 12, 64), 0xffd36a, 0, 0, 0).rotation.x = 0.75;
+    makeMesh(new THREE.TorusGeometry(1.4, 0.025, 12, 64), 0x8d7bff, 0, 0, 0).rotation.y = 0.8;
+  } else {
+    const green = 0x74bc61;
+    makeMesh(new THREE.SphereGeometry(0.76, 24, 18), green, 0, 0, 0);
+    const head = makeMesh(new THREE.SphereGeometry(0.46, 24, 18), green, 0.65, 0.62, 0.1);
+    head.scale.set(1.18, 0.82, 0.85);
+    makeMesh(new THREE.SphereGeometry(0.12, 16, 12), 0xffffff, 0.95, 0.76, 0.45);
+    makeMesh(new THREE.SphereGeometry(0.055, 12, 10), 0x101820, 1, 0.76, 0.55);
+    makeMesh(new THREE.ConeGeometry(0.2, 0.58, 12), 0x397d4e, -0.55, 0.72, 0);
+    makeMesh(new THREE.ConeGeometry(0.2, 0.58, 12), 0x397d4e, -0.1, 0.78, 0);
+    makeMesh(new THREE.ConeGeometry(0.2, 0.58, 12), 0x397d4e, 0.35, 0.82, 0);
+    makeMesh(new THREE.CylinderGeometry(0.13, 0.16, 0.65, 12), 0x397d4e, -0.42, -0.82, 0);
+    makeMesh(new THREE.CylinderGeometry(0.13, 0.16, 0.65, 12), 0x397d4e, 0.42, -0.82, 0);
+  }
   applyPosition();
 }
-function applyPosition() {
-  if (renderer.xr.isPresenting && arPlaced) { subjectGroup.visible = showObject; return; }
-  const x = Number((document.querySelector<HTMLInputElement>('#xpos')!).value) / 100;
-  const y = Number((document.querySelector<HTMLInputElement>('#ypos')!).value) / 100;
-  subjectGroup.position.set((x - 0.5) * 9.6, (0.5 - y) * 5.8, 0);
-  contactShadow.position.set(subjectGroup.position.x, subjectGroup.position.y - 1.28, -0.2);
-  subjectGroup.rotation.z = THREE.MathUtils.degToRad(Number((document.querySelector<HTMLInputElement>('#rotation')!).value));
-  subjectGroup.visible = showObject;
-}
-function resize() {
-  const r = stage.getBoundingClientRect();
-  const w = Math.max(1, Math.floor(r.width * renderer.getPixelRatio()));
-  const h = Math.max(1, Math.floor(r.height * renderer.getPixelRatio()));
-  renderer.setSize(r.width, r.height, false);
-  camera.left = -5; camera.right = 5;
-  camera.top = 5 * r.height / r.width / 2;
-  camera.bottom = -camera.top;
-  camera.updateProjectionMatrix();
-  compositeCanvas.width = w; compositeCanvas.height = h;
-  videoCutoutCanvas.width = w; videoCutoutCanvas.height = h;
-}
-renderer.xr.enabled = true;
-renderer.xr.setReferenceSpaceType('local');
-renderer.setAnimationLoop((_, frame) => {
-  if (frame && xrHitTestSource && xrReferenceSpace) {
-    const hits = frame.getHitTestResults(xrHitTestSource);
-    if (hits.length) {
-      const pose = hits[0].getPose(xrReferenceSpace);
-      if (pose) { reticle.visible = !arPlaced; reticle.matrix.fromArray(pose.transform.matrix); }
-    } else if (!arPlaced) reticle.visible = false;
-  }
-  renderer.render(scene, camera);
-});
-new ResizeObserver(resize).observe(stage);
-resize();
-buildSubject('dino');
 
-function setStatus(message: string) { statusEl.textContent = message; }
-async function startAR() {
-  if (!navigator.xr) { setStatus('WebXR is unavailable here. Use the 2D editor or a supported ARCore Android device in Chrome over HTTPS.'); return; }
-  try {
-    if (!(await navigator.xr.isSessionSupported('immersive-ar'))) { setStatus('This device/browser does not support immersive AR. The web editor remains available.'); return; }
-    const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test'], optionalFeatures: ['local-floor', 'dom-overlay'], domOverlay: { root: document.body } });
-    await renderer.xr.setSession(session);
-    const viewerSpace = await session.requestReferenceSpace('viewer');
-    xrReferenceSpace = await session.requestReferenceSpace('local');
-    xrHitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-    arPlaced = false; subjectGroup.visible = false; reticle.visible = false;
-    arBtn.textContent = 'AR active · tap floor';
-    setStatus('Move your phone slowly to find a surface. Tap the screen to place the 3D subject.');
-    const controller = renderer.xr.getController(0);
-    controller.addEventListener('select', () => {
-      if (!reticle.visible) { setStatus('No surface detected yet. Move the phone to scan the area.'); return; }
-      subjectGroup.position.setFromMatrixPosition(reticle.matrix);
-      subjectGroup.quaternion.setFromRotationMatrix(reticle.matrix);
-      subjectGroup.visible = showObject; arPlaced = true; reticle.visible = false;
-      setStatus('3D subject anchored to the detected surface. Move around to view it.');
-    });
-    scene.add(controller);
-    session.addEventListener('end', () => {
-      xrHitTestSource?.cancel(); xrHitTestSource = null; xrReferenceSpace = null;
-      reticle.visible = false; arPlaced = false; arBtn.textContent = '◎ Start AR';
-      applyPosition(); setStatus('AR session ended. Back in the video editor.');
-    }, { once: true });
-  } catch (error) { setStatus(error instanceof Error ? 'AR could not start: ' + error.message : 'AR session could not start.'); }
+function applyPosition(): void {
+  const x = Number(query<HTMLInputElement>('#xpos').value);
+  const y = Number(query<HTMLInputElement>('#ypos').value);
+  const rotation = Number(query<HTMLInputElement>('#rotation').value);
+  subject.position.set((x / 100 - 0.5) * 9.2, (0.5 - y / 100) * 5.75, 0);
+  subject.rotation.z = THREE.MathUtils.degToRad(rotation);
+  subject.visible = showSubject;
+  contactShadow.position.x = subject.position.x;
+  contactShadow.position.y = subject.position.y - 1.25;
 }
-arBtn.addEventListener('click', () => { void startAR(); });
-function setVideoSource(url: string) {
-  video.src = url;
-  video.style.display = 'block';
+
+function updateLabels(): void {
+  query<HTMLOutputElement>('#scaleOut').textContent = Number(query<HTMLInputElement>('#scale').value).toFixed(2) + '×';
+  query<HTMLOutputElement>('#rotOut').textContent = query<HTMLInputElement>('#rotation').value + '°';
+  query<HTMLOutputElement>('#xOut').textContent = query<HTMLInputElement>('#xpos').value + '%';
+  query<HTMLOutputElement>('#yOut').textContent = query<HTMLInputElement>('#ypos').value + '%';
+}
+
+function resizeRenderer(): void {
+  const rect = stage.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height));
+  renderer.setSize(width, height, false);
+  camera.left = -5;
+  camera.right = 5;
+  camera.top = 5 * height / width;
+  camera.bottom = -5 * height / width;
+  camera.updateProjectionMatrix();
+  compositeCanvas.width = Math.min(1920, Math.max(640, width * 2));
+  compositeCanvas.height = Math.round(compositeCanvas.width * height / width);
+  videoCutoutCanvas.width = compositeCanvas.width;
+  videoCutoutCanvas.height = compositeCanvas.height;
+  renderScene();
+}
+
+function renderScene(): void {
+  renderer.render(scene, camera);
+}
+
+function drawContained(ctx: CanvasRenderingContext2D, image: CanvasImageSource, sourceWidth: number, sourceHeight: number, width: number, height: number): void {
+  if (!sourceWidth || !sourceHeight) return;
+  const scale = Math.min(width / sourceWidth, height / sourceHeight);
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  ctx.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+}
+
+function clearVideoCutouts(): void {
+  videoCutoutFrames.forEach((frame) => frame.bitmap.close());
+  videoCutoutFrames = [];
+  videoCutoutReady = false;
+  videoCutoutCtx.clearRect(0, 0, videoCutoutCanvas.width, videoCutoutCanvas.height);
+}
+
+function renderVideoCutoutPreview(): void {
+  videoCutoutCtx.clearRect(0, 0, videoCutoutCanvas.width, videoCutoutCanvas.height);
+  if (!videoCutoutReady || videoCutoutFrames.length === 0) return;
+  let selected = videoCutoutFrames[0];
+  for (const frame of videoCutoutFrames) {
+    if (frame.time <= video.currentTime) selected = frame;
+    else break;
+  }
+  drawContained(videoCutoutCtx, selected.bitmap, selected.bitmap.width, selected.bitmap.height, videoCutoutCanvas.width, videoCutoutCanvas.height);
+}
+
+function revokeSourceUrl(): void {
+  if (sourceObjectUrl) URL.revokeObjectURL(sourceObjectUrl);
+  sourceObjectUrl = null;
+}
+
+function setVideoSource(blob: Blob): void {
+  stopExport();
+  clearVideoCutouts();
+  revokeSourceUrl();
+  sourceObjectUrl = URL.createObjectURL(blob);
+  video.srcObject = null;
+  video.src = sourceObjectUrl;
+  video.load();
   stage.classList.add('has-video');
-  void video.play().catch(() => {});
   playBtn.disabled = false;
   exportBtn.disabled = false;
-  videoCutoutBtn.disabled = false;
-  videoCutoutReady = false;
-  videoCutoutFrames.forEach(frame => frame.bitmap.close()); videoCutoutFrames.length = 0;
-  videoCutoutCtx.clearRect(0, 0, videoCutoutCanvas.width, videoCutoutCanvas.height);
-  setStatus('Video loaded. Position your 3D subject and export.');
+  setStatus('Video loaded. Position the 3D subject, then export your composite.');
 }
-document.querySelector('#importBtn')!.addEventListener('click', () => fileInput.click());
+
+function stopCameraTracks(): void {
+  cameraStream?.getTracks().forEach((track) => track.stop());
+  cameraStream = null;
+}
+
+function stopExport(): void {
+  exportStop?.();
+  exportStop = null;
+}
+
+async function waitForSeek(time: number): Promise<void> {
+  if (Math.abs(video.currentTime - time) < 0.01) return;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Video frame seek timed out.'));
+    }, 8000);
+    const onSeeked = () => { cleanup(); resolve(); };
+    const onError = () => { cleanup(); reject(new Error('The browser could not decode a video frame.')); };
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('error', onError);
+    };
+    video.addEventListener('seeked', onSeeked, { once: true });
+    video.addEventListener('error', onError, { once: true });
+    video.currentTime = time;
+  });
+}
+
+async function processVideoCutout(): Promise<void> {
+  if (!video.src || !Number.isFinite(video.duration) || video.duration <= 0) {
+    setStatus('Import a valid video before running AI video cutout.');
+    return;
+  }
+  if (video.duration > MAX_AI_CLIP_SECONDS) {
+    setStatus('This AI workflow is limited to 12 seconds. Trim the clip and import it again.');
+    return;
+  }
+
+  const wasPaused = video.paused;
+  const previousTime = video.currentTime;
+  const frameCount = Math.max(1, Math.ceil(video.duration * AI_SAMPLE_FPS));
+  const generated: Array<{ time: number; bitmap: ImageBitmap }> = [];
+  videoCutoutBtn.disabled = true;
+  videoCutoutBtn.textContent = 'Processing AI frames…';
+  video.pause();
+
+  try {
+    const workCanvas = document.createElement('canvas');
+    const context = workCanvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('Canvas processing is unavailable.');
+
+    for (let index = 0; index < frameCount; index += 1) {
+      const time = Math.min(index / AI_SAMPLE_FPS, Math.max(0, video.duration - 0.04));
+      await waitForSeek(time);
+      const factor = Math.min(1, AI_MAX_EDGE / Math.max(video.videoWidth, video.videoHeight));
+      workCanvas.width = Math.max(1, Math.round(video.videoWidth * factor));
+      workCanvas.height = Math.max(1, Math.round(video.videoHeight * factor));
+      context.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
+      const frameBlob = await new Promise<Blob>((resolve, reject) => {
+        workCanvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not encode sampled frame.')), 'image/jpeg', 0.86);
+      });
+      const cutout = await removeBackground(frameBlob, { model: 'isnet_fp16', output: { format: 'image/png' } });
+      generated.push({ time, bitmap: await createImageBitmap(cutout) });
+      setStatus('AI video cutout: ' + (index + 1) + ' / ' + frameCount + ' frames (' + Math.round((index + 1) / frameCount * 100) + '%).');
+    }
+
+    clearVideoCutouts();
+    videoCutoutFrames = generated;
+    videoCutoutReady = true;
+    renderVideoCutoutPreview();
+    setStatus('Cutout ready. ' + generated.length + ' sampled frames are available for preview and export.');
+  } catch (error) {
+    generated.forEach((frame) => frame.bitmap.close());
+    setStatus(error instanceof Error ? 'AI video cutout failed: ' + error.message : 'AI video cutout failed.');
+  } finally {
+    try { await waitForSeek(Math.min(previousTime, Math.max(0, video.duration - 0.04))); } catch { /* Keep the current decoded frame. */ }
+    if (!wasPaused) await video.play().catch(() => undefined);
+    videoCutoutBtn.disabled = false;
+    videoCutoutBtn.textContent = 'AI video cutout (12 sec max)';
+  }
+}
+
+async function exportComposite(): Promise<void> {
+  if (!video.src || video.readyState < HTMLMediaElement.HAVE_METADATA) {
+    setStatus('Load a video before exporting.');
+    return;
+  }
+  if (typeof compositeCanvas.captureStream !== 'function' || typeof MediaRecorder === 'undefined') {
+    setStatus('This browser does not support canvas video recording.');
+    return;
+  }
+  const context = compositeCanvas.getContext('2d');
+  if (!context) {
+    setStatus('Canvas rendering is unavailable.');
+    return;
+  }
+
+  stopExport();
+  const stream = compositeCanvas.captureStream(30);
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+    ? 'video/webm;codecs=vp9'
+    : MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
+      ? 'video/webm;codecs=vp8'
+      : 'video/webm';
+
+  let output: MediaRecorder;
+  try {
+    output = new MediaRecorder(stream, { mimeType });
+  } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    setStatus('The browser could not initialize a supported WebM encoder.');
+    return;
+  }
+
+  const chunks: Blob[] = [];
+  let stopped = false;
+  let animationFrame = 0;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    cancelAnimationFrame(animationFrame);
+    video.removeEventListener('ended', stop);
+    if (output.state !== 'inactive') output.stop();
+  };
+
+  const draw = () => {
+    const width = compositeCanvas.width;
+    const height = compositeCanvas.height;
+    context.clearRect(0, 0, width, height);
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      drawContained(context, video, video.videoWidth, video.videoHeight, width, height);
+    }
+    renderScene();
+    context.drawImage(glCanvas, 0, 0, width, height);
+    if (foregroundLayer.complete && foregroundLayer.naturalWidth > 0) {
+      drawContained(context, foregroundLayer, foregroundLayer.naturalWidth, foregroundLayer.naturalHeight, width, height);
+    }
+    if (videoCutoutReady && videoCutoutFrames.length) {
+      let frame = videoCutoutFrames[0];
+      for (const candidate of videoCutoutFrames) {
+        if (candidate.time <= video.currentTime) frame = candidate;
+        else break;
+      }
+      drawContained(context, frame.bitmap, frame.bitmap.width, frame.bitmap.height, width, height);
+    }
+    if (!stopped && output.state === 'recording' && !video.ended) animationFrame = requestAnimationFrame(draw);
+  };
+
+  output.ondataavailable = (event) => { if (event.data.size > 0) chunks.push(event.data); };
+  output.onerror = () => {
+    stop();
+    setStatus('Recording failed. Try a shorter clip or another browser.');
+  };
+  output.onstop = () => {
+    stream.getTracks().forEach((track) => track.stop());
+    if (chunks.length) {
+      const result = new Blob(chunks, { type: mimeType });
+      const url = URL.createObjectURL(result);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'reality-vfx-composite.webm';
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setStatus('Export complete: reality-vfx-composite.webm');
+    } else {
+      setStatus('No video data was produced. Check browser recording support.');
+    }
+    exportStop = null;
+    exportBtn.disabled = false;
+    exportBtn.textContent = 'Export WebM composite';
+  };
+
+  exportStop = stop;
+  exportBtn.disabled = true;
+  exportBtn.textContent = 'Rendering…';
+  video.pause();
+  try {
+    video.currentTime = 0;
+    await video.play();
+  } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    exportStop = null;
+    exportBtn.disabled = false;
+    exportBtn.textContent = 'Export WebM composite';
+    setStatus('Playback could not start. Tap Play once, then retry export.');
+    return;
+  }
+  output.start(250);
+  setStatus('Rendering composite in real time. Keep this tab open until export finishes.');
+  draw();
+  video.addEventListener('ended', stop, { once: true });
+}
+
+query<HTMLButtonElement>('#importBtn').addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   const file = fileInput.files?.[0];
   if (!file) return;
-  if (!file.type.startsWith('video/')) { setStatus('Please select a video file.'); return; }
-  if (video.src.startsWith('blob:')) URL.revokeObjectURL(video.src);
-  setVideoSource(URL.createObjectURL(file));
-});
-document.querySelector('#recordBtn')!.addEventListener('click', async () => {
-  try {
-    if (recorder?.state === 'recording') {
-      recorder.stop();
-      return;
-    }
-    mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
-    video.srcObject = mediaStream;
-    video.style.display = 'block';
-    stage.classList.add('has-video');
-    await video.play();
-    recordingChunks = [];
-    recorder = new MediaRecorder(mediaStream);
-    recorder.ondataavailable = e => { if (e.data.size) recordingChunks.push(e.data); };
-    recorder.onstop = () => {
-      const blob = new Blob(recordingChunks, { type: recorder?.mimeType || 'video/webm' });
-      setVideoSource(URL.createObjectURL(blob));
-      mediaStream?.getTracks().forEach(t => t.stop());
-      mediaStream = null;
-      (document.querySelector('#recordBtn') as HTMLButtonElement).textContent = '● Record camera';
-      setStatus('Camera clip captured and ready for compositing.');
-    };
-    recorder.start();
-    (document.querySelector('#recordBtn') as HTMLButtonElement).textContent = '■ Stop recording';
-    setStatus('Recording camera… press Stop recording when finished.');
-  } catch (err) {
-    setStatus(err instanceof Error ? err.message : 'Camera permission or device error.');
+  if (!file.type.startsWith('video/')) {
+    setStatus('Choose a supported video file.');
+    fileInput.value = '';
+    return;
   }
-});
-playBtn.addEventListener('click', async () => {
-  if (video.paused) { await video.play(); playBtn.textContent = 'Ⅱ Pause'; }
-  else { video.pause(); playBtn.textContent = '▶ Play'; }
-});
-video.addEventListener('pause', () => { playBtn.textContent = '▶ Play'; });
-video.addEventListener('play', () => { playBtn.textContent = 'Ⅱ Pause'; });
-video.addEventListener('timeupdate', renderVideoCutoutPreview);
-document.querySelector('#resetBtn')!.addEventListener('click', () => {
-  (document.querySelector<HTMLInputElement>('#scale')!).value = '1';
-  (document.querySelector<HTMLInputElement>('#rotation')!).value = '0';
-  (document.querySelector<HTMLInputElement>('#xpos')!).value = '52';
-  (document.querySelector<HTMLInputElement>('#ypos')!).value = '62';
-  updateLabels(); applyPosition(); subjectGroup.scale.setScalar(1);
-});
-document.querySelector('#subject')!.addEventListener('change', e => buildSubject((e.target as HTMLSelectElement).value));
-for (const id of ['scale', 'rotation', 'xpos', 'ypos']) {
-  document.querySelector<HTMLInputElement>('#' + id)!.addEventListener('input', () => {
-    updateLabels();
-    if (id === 'scale') subjectGroup.scale.setScalar(Number((document.querySelector<HTMLInputElement>('#scale')!).value));
-    applyPosition();
-  });
-}
-function updateLabels() {
-  (document.querySelector('#scaleOut')!).textContent = Number((document.querySelector<HTMLInputElement>('#scale')!).value).toFixed(2) + '×';
-  (document.querySelector('#rotOut')!).textContent = (document.querySelector<HTMLInputElement>('#rotation')!).value + '°';
-  (document.querySelector('#xOut')!).textContent = (document.querySelector<HTMLInputElement>('#xpos')!).value + '%';
-  (document.querySelector('#yOut')!).textContent = (document.querySelector<HTMLInputElement>('#ypos')!).value + '%';
-}
-document.querySelector('#toggleObject')!.addEventListener('click', e => {
-  showObject = !showObject; applyPosition();
-  (e.currentTarget as HTMLButtonElement).textContent = showObject ? 'Hide object' : 'Show object';
-});
-document.querySelector('#gridToggle')!.addEventListener('click', e => {
-  showGuides = !showGuides;
-  (e.currentTarget as HTMLButtonElement).textContent = showGuides ? 'Hide guides' : 'Show guides';
-  setStatus(showGuides ? 'Guides enabled conceptually; use the sliders for manual alignment.' : 'Guides hidden.');
+  if (file.size > MAX_VIDEO_BYTES) {
+    setStatus('Video exceeds the 250 MB browser import limit.');
+    fileInput.value = '';
+    return;
+  }
+  setVideoSource(file);
+  fileInput.value = '';
 });
 
-function drawContainedImage(ctx: CanvasRenderingContext2D, image: CanvasImageSource, sourceWidth: number, sourceHeight: number, width: number, height: number) {
-  const scale = Math.min(width / sourceWidth, height / sourceHeight);
-  const drawWidth = sourceWidth * scale, drawHeight = sourceHeight * scale;
-  ctx.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-}
-function renderVideoCutoutPreview() {
-  const w = videoCutoutCanvas.width, h = videoCutoutCanvas.height;
-  videoCutoutCtx.clearRect(0, 0, w, h);
-  if (!videoCutoutReady || !videoCutoutFrames.length) return;
-  let frame = videoCutoutFrames[0];
-  for (const candidate of videoCutoutFrames) {
-    if (candidate.time <= video.currentTime) frame = candidate;
-    else break;
-  }
-  drawContainedImage(videoCutoutCtx, frame.bitmap, frame.bitmap.width, frame.bitmap.height, w, h);
-}
-async function processVideoCutout() {
-  if (!video.src || !Number.isFinite(video.duration) || video.duration <= 0) {
-    setStatus('Import a finite-duration video before running video cutout.');
+recordBtn.addEventListener('click', async () => {
+  if (recorder?.state === 'recording') {
+    recorder.stop();
+    recordBtn.disabled = true;
+    recordBtn.textContent = 'Finishing…';
     return;
   }
-  if (video.duration > 12) {
-    setStatus('For mobile performance, trim the clip to 12 seconds or less and import it again.');
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    setStatus('Camera recording is not supported in this browser.');
     return;
   }
-  const wasPaused = video.paused;
-  const previousTime = video.currentTime;
-  const frameRate = 2;
-  const count = Math.max(1, Math.ceil(video.duration * frameRate));
-  const frames: Array<{ time: number; bitmap: ImageBitmap }> = [];
-  videoCutoutBtn.disabled = true;
-  videoCutoutBtn.textContent = 'AI video processing…';
-  video.pause();
   try {
-    const workCanvas = document.createElement('canvas');
-    const workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
-    if (!workCtx) throw new Error('Canvas processing is unavailable.');
-    for (let index = 0; index < count; index++) {
-      const time = Math.min(index / frameRate, Math.max(0, video.duration - 0.04));
-      if (Math.abs(video.currentTime - time) > 0.015) {
-        video.currentTime = time;
-        await new Promise<void>((resolve, reject) => {
-        const onSeeked = () => { cleanup(); resolve(); };
-        const onError = () => { cleanup(); reject(new Error('Could not decode a video frame.')); };
-        const cleanup = () => { video.removeEventListener('seeked', onSeeked); video.removeEventListener('error', onError); };
-        video.addEventListener('seeked', onSeeked, { once: true });
-        video.addEventListener('error', onError, { once: true });
-        });
-      }
-      const factor = Math.min(1, 512 / Math.max(video.videoWidth, video.videoHeight));
-      workCanvas.width = Math.max(1, Math.round(video.videoWidth * factor));
-      workCanvas.height = Math.max(1, Math.round(video.videoHeight * factor));
-      workCtx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
-      const sourceBlob = await new Promise<Blob>((resolve, reject) => workCanvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Could not encode a video frame.')), 'image/jpeg', 0.88));
-      const cutoutBlob = await removeBackground(sourceBlob, { model: 'isnet_fp16', output: { format: 'image/png' } });
-      const bitmap = await createImageBitmap(cutoutBlob);
-      frames.push({ time, bitmap });
-      setStatus('AI video cutout: ' + (index + 1) + ' / ' + count + ' frames processed (' + Math.round((index + 1) / count * 100) + '%).');
-    }
-    videoCutoutFrames.forEach(frame => frame.bitmap.close());
-    videoCutoutFrames.splice(0, videoCutoutFrames.length, ...frames);
-    videoCutoutReady = true;
-    renderVideoCutoutPreview();
-    setStatus('Video foreground cutout ready: ' + frames.length + ' sampled frames at 2 fps. Preview and export will composite the extracted subject.');
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9'
+      : 'video/webm';
+    recorder = new MediaRecorder(cameraStream, { mimeType });
+    recordingChunks = [];
+    recorder.ondataavailable = (event) => { if (event.data.size) recordingChunks.push(event.data); };
+    recorder.onerror = () => {
+      stopCameraTracks();
+      recordBtn.disabled = false;
+      recordBtn.textContent = '● Record camera';
+      setStatus('Camera recording failed.');
+    };
+    recorder.onstop = () => {
+      const recording = new Blob(recordingChunks, { type: recorder?.mimeType || 'video/webm' });
+      stopCameraTracks();
+      recordBtn.disabled = false;
+      recordBtn.textContent = '● Record camera';
+      if (recording.size) setVideoSource(recording);
+      else setStatus('The camera recording was empty.');
+    };
+    recorder.start(250);
+    recordBtn.textContent = '■ Stop recording';
+    setStatus('Recording camera. Press Stop recording when finished.');
   } catch (error) {
-    frames.forEach(frame => frame.bitmap.close());
-    setStatus(error instanceof Error ? 'Video cutout failed: ' + error.message : 'Video cutout failed.');
-  } finally {
-    video.currentTime = previousTime;
-    if (!wasPaused) await video.play().catch(() => {});
-    videoCutoutBtn.disabled = false;
-    videoCutoutBtn.textContent = 'AI video cutout (12 sec)';
+    stopCameraTracks();
+    setStatus(error instanceof Error ? error.message : 'Camera permission or device error.');
   }
-}
-videoCutoutBtn.addEventListener('click', () => { void processVideoCutout(); });
-function pointerToWorld(clientX: number, clientY: number) {
-  const rect = glCanvas.getBoundingClientRect();
-  const x = ((clientX - rect.left) / rect.width - 0.5) * 10;
-  const y = (0.5 - (clientY - rect.top) / rect.height) * (10 * rect.height / rect.width);
-  return { x, y };
-}
-glCanvas.addEventListener('pointerdown', e => {
-  dragPointer = e.pointerId;
-  glCanvas.setPointerCapture(e.pointerId);
-  const p = pointerToWorld(e.clientX, e.clientY);
-  subjectGroup.position.set(p.x, p.y, 0);
-  syncPositionSliders();
 });
-glCanvas.addEventListener('pointermove', e => {
-  if (dragPointer !== e.pointerId) return;
-  const p = pointerToWorld(e.clientX, e.clientY);
-  subjectGroup.position.set(p.x, p.y, 0);
-  syncPositionSliders();
+
+playBtn.addEventListener('click', async () => {
+  if (video.paused) {
+    try { await video.play(); } catch { setStatus('Video playback was blocked by the browser.'); }
+  } else {
+    video.pause();
+  }
 });
-glCanvas.addEventListener('pointerup', e => {
-  if (dragPointer === e.pointerId) dragPointer = null;
+video.addEventListener('play', () => { playBtn.textContent = 'Ⅱ Pause'; });
+video.addEventListener('pause', () => { playBtn.textContent = '▶ Play'; });
+video.addEventListener('loadedmetadata', () => {
+  resizeRenderer();
+  videoCutoutBtn.disabled = !Number.isFinite(video.duration) || video.duration > MAX_AI_CLIP_SECONDS;
 });
-function syncPositionSliders() {
-  const x = Math.round((subjectGroup.position.x / 9.6 + 0.5) * 100);
-  const y = Math.round((0.5 - subjectGroup.position.y / 5.8) * 100);
-  (document.querySelector<HTMLInputElement>('#xpos')!).value = String(Math.max(5, Math.min(95, x)));
-  (document.querySelector<HTMLInputElement>('#ypos')!).value = String(Math.max(10, Math.min(90, y)));
+video.addEventListener('timeupdate', renderVideoCutoutPreview);
+video.addEventListener('error', () => setStatus('The selected video could not be decoded by this browser.'));
+
+query<HTMLButtonElement>('#resetBtn').addEventListener('click', () => {
+  query<HTMLInputElement>('#scale').value = '1';
+  query<HTMLInputElement>('#rotation').value = '0';
+  query<HTMLInputElement>('#xpos').value = '52';
+  query<HTMLInputElement>('#ypos').value = '62';
+  subject.scale.setScalar(1);
+  applyPosition();
   updateLabels();
-}
-async function exportComposite() {
-  if (!video.src && !video.srcObject) { setStatus('Load or record a video first.'); return; }
-  if (!('captureStream' in compositeCanvas) || !('MediaRecorder' in window)) {
-    setStatus('Video export is not supported by this browser.');
-    return;
-  }
-  const ctx = compositeCanvas.getContext('2d');
-  if (!ctx) return;
-  const draw = () => {
-    const w = compositeCanvas.width, h = compositeCanvas.height;
-    ctx.clearRect(0, 0, w, h);
-    if (video.readyState >= 2) {
-      const vw = video.videoWidth || w, vh = video.videoHeight || h;
-      const scale = Math.min(w / vw, h / vh);
-      const dw = vw * scale, dh = vh * scale;
-      ctx.drawImage(video, (w - dw) / 2, (h - dh) / 2, dw, dh);
-    }
-    renderer.render(scene, camera);
-    ctx.drawImage(glCanvas, 0, 0, w, h);
-    if (foregroundLayer.complete && foregroundLayer.naturalWidth) ctx.drawImage(foregroundLayer, 0, 0, w, h);
-    if (videoCutoutReady && videoCutoutFrames.length) {
-      let frame = videoCutoutFrames[0];
-      for (const candidate of videoCutoutFrames) { if (candidate.time <= video.currentTime) frame = candidate; else break; }
-      drawContainedImage(ctx, frame.bitmap, frame.bitmap.width, frame.bitmap.height, w, h);
-    }
-  };
-  const stream = compositeCanvas.captureStream(30);
-  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
-  const out = new MediaRecorder(stream, { mimeType: mime });
-  const chunks: Blob[] = [];
-  out.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-  out.onstop = () => {
-    const blob = new Blob(chunks, { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'reality-vfx-composite.webm'; a.click();
-    URL.revokeObjectURL(url);
-    stream.getTracks().forEach(t => t.stop());
-    setStatus('Export complete: reality-vfx-composite.webm');
-  };
-  const wasPaused = video.paused;
-  if (wasPaused) await video.play().catch(() => {});
-  out.start();
-  setStatus('Rendering composite in real time…');
-  let stopped = false;
-  const stop = () => { if (!stopped) { stopped = true; out.stop(); } };
-  const drawLoop = () => {
-    if (out.state !== 'recording') return;
-    draw();
-    if (video.ended) stop();
-    else requestAnimationFrame(drawLoop);
-  };
-  drawLoop();
-  video.addEventListener('ended', stop, { once: true });
-  // For looping inputs, export one pass rather than recording forever.
-  const duration = Number.isFinite(video.duration) ? video.duration : 30;
-  window.setTimeout(stop, Math.max(1, duration) * 1000 + 500);
-}
-exportBtn.addEventListener('click', () => { void exportComposite(); });
-aiCutoutInput.addEventListener('change', () => {
-  aiCutoutFile = aiCutoutInput.files?.[0] ?? null;
-  aiCutoutBtn.disabled = !aiCutoutFile;
-  if (aiCutoutFile) setStatus('Image selected. Run AI background removal to create a transparent foreground cutout.');
 });
-aiCutoutBtn.addEventListener('click', async () => {
-  if (!aiCutoutFile) return;
-  if (aiCutoutFile.size > 12 * 1024 * 1024) { setStatus('Choose an image under 12 MB for browser-based AI processing.'); return; }
-  aiCutoutBtn.disabled = true;
-  aiCutoutBtn.textContent = 'AI processing…';
-  setStatus('Loading the AI segmentation model. The first run may take time and requires an internet connection.');
-  try {
-    const result = await removeBackground(aiCutoutFile, { model: 'isnet_fp16', output: { format: 'image/png' } });
-    const url = URL.createObjectURL(result);
-    const oldUrl = foregroundLayer.src;
-    foregroundLayer.onload = () => { if (oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl); };
-    foregroundLayer.src = url;
-    foregroundLayer.style.display = 'block';
-    setStatus('AI cutout ready. Transparent foreground layer is now above the 3D subject.');
-  } catch (error) {
-    setStatus(error instanceof Error ? 'AI cutout failed: ' + error.message : 'AI cutout failed. Try a smaller image or manual transparent PNG.');
-  } finally {
-    aiCutoutBtn.disabled = !aiCutoutFile;
-    aiCutoutBtn.textContent = 'AI remove background';
-  }
+
+query<HTMLSelectElement>('#subject').addEventListener('change', (event) => {
+  buildSubject((event.currentTarget as HTMLSelectElement).value);
 });
+for (const id of ['scale', 'rotation', 'xpos', 'ypos']) {
+  query<HTMLInputElement>('#' + id).addEventListener('input', () => {
+    if (id === 'scale') subject.scale.setScalar(Number(query<HTMLInputElement>('#scale').value));
+    applyPosition();
+    updateLabels();
+  });
+}
+
+query<HTMLButtonElement>('#toggleObject').addEventListener('click', (event) => {
+  showSubject = !showSubject;
+  applyPosition();
+  (event.currentTarget as HTMLButtonElement).textContent = showSubject ? 'Hide subject' : 'Show subject';
+});
+
+function pointerWorld(clientX: number, clientY: number): { x: number; y: number } {
+  const rect = glCanvas.getBoundingClientRect();
+  return {
+    x: ((clientX - rect.left) / rect.width - 0.5) * 10,
+    y: (0.5 - (clientY - rect.top) / rect.height) * (10 * rect.height / rect.width)
+  };
+}
+glCanvas.addEventListener('pointerdown', (event) => {
+  dragPointer = event.pointerId;
+  glCanvas.setPointerCapture(event.pointerId);
+  const position = pointerWorld(event.clientX, event.clientY);
+  subject.position.set(position.x, position.y, 0);
+});
+glCanvas.addEventListener('pointermove', (event) => {
+  if (dragPointer !== event.pointerId) return;
+  const position = pointerWorld(event.clientX, event.clientY);
+  subject.position.set(position.x, position.y, 0);
+  const x = Math.round((position.x / 9.2 + 0.5) * 100);
+  const y = Math.round((0.5 - position.y / 5.75) * 100);
+  query<HTMLInputElement>('#xpos').value = String(THREE.MathUtils.clamp(x, 5, 95));
+  query<HTMLInputElement>('#ypos').value = String(THREE.MathUtils.clamp(y, 10, 90));
+  updateLabels();
+});
+const releasePointer = (event: PointerEvent) => {
+  if (dragPointer === event.pointerId) dragPointer = null;
+};
+glCanvas.addEventListener('pointerup', releasePointer);
+glCanvas.addEventListener('pointercancel', releasePointer);
+
 foregroundInput.addEventListener('change', () => {
   const file = foregroundInput.files?.[0];
   if (!file) return;
-  if (!['image/png', 'image/webp'].includes(file.type)) { setStatus('Use a transparent PNG or WebP cutout.'); return; }
-  if (foregroundLayer.src.startsWith('blob:')) URL.revokeObjectURL(foregroundLayer.src);
-  foregroundLayer.src = URL.createObjectURL(file);
+  if (!['image/png', 'image/webp'].includes(file.type)) {
+    setStatus('Use a transparent PNG or WebP foreground cutout.');
+    foregroundInput.value = '';
+    return;
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    setStatus('Foreground overlay exceeds the 12 MB limit.');
+    foregroundInput.value = '';
+    return;
+  }
+  if (foregroundObjectUrl) URL.revokeObjectURL(foregroundObjectUrl);
+  foregroundObjectUrl = URL.createObjectURL(file);
+  foregroundLayer.src = foregroundObjectUrl;
   foregroundLayer.style.display = 'block';
-  setStatus('Foreground cutout loaded above the 3D subject. Align it to your video before export.');
+  setStatus('Foreground overlay loaded above the virtual subject.');
 });
-document.querySelector<HTMLSelectElement>('#lighting')!.addEventListener('change', e => {
-  const mode = (e.target as HTMLSelectElement).value;
-  if (mode === 'warm') { keyLight.color.set(0xffc17a); keyLight.intensity = 2.5; }
-  else if (mode === 'cool') { keyLight.color.set(0x9fc9ff); keyLight.intensity = 2.0; }
-  else { keyLight.color.set(0xffffff); keyLight.intensity = 2.2; }
-  setStatus('Virtual subject lighting preset changed. Source video color is unchanged.');
+
+aiCutoutInput.addEventListener('change', () => {
+  selectedAiImage = aiCutoutInput.files?.[0] ?? null;
+  aiCutoutBtn.disabled = !selectedAiImage;
+  if (selectedAiImage) setStatus('Image selected. Run AI background removal to create a transparent cutout.');
 });
-const shadowSlider = document.querySelector<HTMLInputElement>('#shadow')!;
+
+aiCutoutBtn.addEventListener('click', async () => {
+  if (!selectedAiImage) return;
+  if (!selectedAiImage.type.startsWith('image/')) {
+    setStatus('Choose a supported image file.');
+    return;
+  }
+  if (selectedAiImage.size > MAX_IMAGE_BYTES) {
+    setStatus('Image exceeds the 12 MB AI processing limit.');
+    return;
+  }
+  aiCutoutBtn.disabled = true;
+  aiCutoutBtn.textContent = 'AI processing…';
+  setStatus('Loading the segmentation model. First use requires internet access and may take time.');
+  try {
+    const result = await removeBackground(selectedAiImage, {
+      model: 'isnet_fp16',
+      output: { format: 'image/png' }
+    });
+    const url = URL.createObjectURL(result);
+    if (foregroundObjectUrl) URL.revokeObjectURL(foregroundObjectUrl);
+    foregroundObjectUrl = url;
+    foregroundLayer.src = url;
+    foregroundLayer.style.display = 'block';
+    setStatus('AI image cutout completed. The transparent result is layered over the 3D subject.');
+  } catch (error) {
+    setStatus(error instanceof Error ? 'AI image cutout failed: ' + error.message : 'AI image cutout failed.');
+  } finally {
+    aiCutoutBtn.disabled = !selectedAiImage;
+    aiCutoutBtn.textContent = 'AI remove image background';
+  }
+});
+
+videoCutoutBtn.addEventListener('click', () => { void processVideoCutout(); });
+query<HTMLSelectElement>('#lighting').addEventListener('change', (event) => {
+  const mode = (event.currentTarget as HTMLSelectElement).value;
+  if (mode === 'warm') {
+    keyLight.color.set(0xffc17a);
+    keyLight.intensity = 2.5;
+  } else if (mode === 'cool') {
+    keyLight.color.set(0x9fc9ff);
+    keyLight.intensity = 2;
+  } else {
+    keyLight.color.set(0xffffff);
+    keyLight.intensity = 2.1;
+  }
+  setStatus('Virtual subject lighting updated. Source footage colors are unchanged.');
+});
+
+const shadowSlider = query<HTMLInputElement>('#shadow');
 shadowSlider.addEventListener('input', () => {
-  const value = Number(shadowSlider.value) / 100;
-  (contactShadow.material as THREE.MeshBasicMaterial).opacity = value;
-  document.querySelector('#shadowOut')!.textContent = shadowSlider.value + '%';
+  (contactShadow.material as THREE.MeshBasicMaterial).opacity = Number(shadowSlider.value) / 100;
+  query<HTMLOutputElement>('#shadowOut').textContent = shadowSlider.value + '%';
 });
+
+exportBtn.addEventListener('click', () => { void exportComposite(); });
+
+const resizeObserver = new ResizeObserver(resizeRenderer);
+resizeObserver.observe(stage);
+window.addEventListener('beforeunload', () => {
+  stopExport();
+  stopCameraTracks();
+  clearVideoCutouts();
+  revokeSourceUrl();
+  if (foregroundObjectUrl) URL.revokeObjectURL(foregroundObjectUrl);
+  resizeObserver.disconnect();
+  renderer.dispose();
+});
+
+buildSubject('dino');
 updateLabels();
+resizeRenderer();
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => { void navigator.serviceWorker.register('/sw.js').catch(error => console.warn('Service worker registration failed:', error)); });
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker.register('/sw.js').catch((error: unknown) => {
+      console.warn('Service worker registration failed:', error);
+    });
+  });
 }

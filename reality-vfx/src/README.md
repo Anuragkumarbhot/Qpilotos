@@ -1,23 +1,20 @@
-# Source notes
+# Source architecture
 
-`main.ts` owns the prototype UI, camera/import workflow, Three.js scene, pointer placement, and canvas/MediaRecorder export. `style.css` is responsive for phone and desktop use.
+- \`main.ts\`: application bootstrap, media lifecycle, Three.js scene, AI cutout workflow, and WebM export.
+- \`style.css\`: responsive editor layout, controls, focus states, and reduced-motion support.
+- \`../public/sw.js\`: versioned app-shell cache. Runtime media/model assets are not intentionally precached.
 
-## Known limitations to address before production
+## Engineering boundaries
 
-- 3D models are procedural placeholders rather than production assets.
-- Placement is screen-space/manual. There is no ARCore/ARKit world tracking or SLAM.
-- No object segmentation, depth estimation, occlusion masks, relighting, shadows-on-footage, or camera pose recovery.
-- Export is WebM and happens in real time; browser support and device performance vary.
-- Microphone/camera permission requires a secure context.
+The browser client does not contain credentials or call a private backend. Imported footage remains local to the browser. The IMG.LY package downloads segmentation model assets as needed.
 
-## Production architecture proposal
+The WebXR control is capability-gated. It must not be interpreted as a replacement for a native ARCore/ARKit implementation. Production world tracking, persistent anchors, depth occlusion, and camera pose recovery require device-specific implementation and physical-device validation.
 
-**Mobile capture:** native Android CameraX + ARCore (or iOS AVFoundation + ARKit).
+## Before a commercial release
 
-**Tracking:** AR plane detection, world anchors, camera pose, depth maps, segmentation masks.
-
-**Renderer:** Unity/Unreal or native Filament/SceneKit; PBR assets, environment lighting, shadow catcher, depth-aware occlusion.
-
-**AI scene service:** asynchronous job API for video understanding, prompt interpretation, scene reconstruction, asset selection, and video-to-video generation. Keep model inference off-device unless an efficient mobile model is validated.
-
-**Backend:** authenticated upload, object storage, job queue, GPU workers, progress events, output delivery, retention controls, and usage metering. Store secrets only server-side.
+1. Run typecheck/build on the supported Node.js LTS runtime.
+2. Test camera permission denial, device camera contention, media decode errors, and browser tab backgrounding.
+3. Test WebM MIME support and memory limits on representative Android and desktop devices.
+4. Verify AI model licensing, distribution terms, and privacy disclosures.
+5. Add automated browser tests and a real-device release matrix.
+6. Review all user-facing capability claims against tested devices.

@@ -1,7 +1,8 @@
 {
+  "id": "/",
   "name": "Reality VFX Studio",
   "short_name": "Reality VFX",
-  "description": "Mobile AR and cinematic video compositing studio.",
+  "description": "Browser-based 3D video compositing studio.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

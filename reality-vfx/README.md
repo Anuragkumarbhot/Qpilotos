@@ -1,75 +1,63 @@
 # Reality VFX Studio
 
-Mobile-first video compositing and WebXR AR placement prototype.
+A browser-based compositing prototype for importing or recording footage, positioning a procedural Three.js subject, applying client-side foreground extraction, and exporting a WebM composite.
 
-## Phase 2 capabilities
-- Responsive web editor for desktop and mobile.
-- Installable PWA shell (Add to Home Screen on supported browsers).
-- WebXR immersive AR entry point with hit-test surface detection.
-- Tap the detected surface to place the procedural 3D subject in the AR session.
-- Non-WebXR browsers retain the manual 2D compositing editor.
-- Offline shell caching for the app entry point and static public assets.
+## Current feature scope
 
-## Run locally
-```bash
+- Responsive desktop and mobile editor.
+- Local video import and camera recording.
+- Procedural 3D subject with scale, rotation, and position controls.
+- Manual transparent PNG/WebP foreground overlay.
+- Client-side AI image background removal using IMG.LY.
+- Optional sampled video cutout: 2 fps, maximum 12-second source clip, 512 px maximum long edge.
+- Real-time WebM export where supported by the browser.
+- Installable PWA shell and offline app shell.
+- WebXR availability detection. Immersive AR is enabled only in compatible secure browser/device combinations; the standard editor remains available as a fallback.
+
+## Requirements
+
+- Node.js 20.19+ or 22.12+ (required by Vite 7).
+- npm 10+.
+- HTTPS or localhost for camera and WebXR permissions.
+- A modern browser with WebGL2 for the 3D preview.
+- AI segmentation downloads its model on first use and requires an internet connection.
+
+## Local development
+
+\`\`\`bash
 cd reality-vfx
-npm install
+npm ci
 npm run dev -- --host 0.0.0.0
-```
+\`\`\`
 
-Open the printed localhost URL. Camera and immersive AR features require a secure context (HTTPS or localhost).
+## Quality checks
 
-## Test AR on Android
-1. Use a supported ARCore-compatible Android device.
-2. Open the deployed site in a WebXR-compatible browser (typically Chrome) over HTTPS.
-3. Grant camera permission and install/update Google Play Services for AR if prompted.
-4. Tap **Start AR**, move the phone to scan a horizontal surface, then tap to place the subject.
+\`\`\`bash
+npm run typecheck
+npm run build
+npm run preview -- --host 0.0.0.0
+\`\`\`
 
-WebXR immersive AR support varies by device, browser, browser flags, and AR services. The app checks support and reports when immersive AR is unavailable.
+## Deployment
 
-## Install as an app
-Deploy the reality-vfx folder as a static Vite site over HTTPS. In Chrome on Android, use the browser menu and choose **Install app** or **Add to Home screen**. The PWA is a web app wrapper; it is not a signed native APK.
+Deploy this directory as a static Vite application. Configure the hosting provider to serve the generated \`dist/\` directory and rewrite application routes to \`/index.html\`. Use HTTPS. Do not deploy the repository root as the app root.
 
-## Important limitations
-This phase adds hit-test plane placement, not full world understanding. It does not yet implement persistent anchors, camera pose recording, depth-based real-world occlusion, semantic object segmentation, relighting, automatic shadows, or generative video-to-video scene reconstruction. On iOS Safari, immersive WebXR AR is generally unavailable; use the responsive web editor fallback.
+The app uses root-relative asset paths and is intended to be hosted at a domain root. If deploying under a subpath, update the Vite \`base\` setting and PWA paths together.
 
-## Next engineering phases
-1. Persistent world anchors and plane classification.
-2. Depth sensing and occlusion using supported AR APIs.
-3. Subject segmentation and shadow/lighting estimation.
-4. Native Android ARCore application packaging and iOS ARKit application.
-5. Secure GPU-backed AI scene understanding and generative rendering services.
+## Privacy and data handling
 
-## Privacy
-Camera frames are handled locally in this prototype. The app does not upload footage to an AI service.
-## Phase 3: cinematic compositing tools
-- Soft procedural contact-shadow layer with adjustable opacity, following the 3D subject.
-- Virtual-subject lighting presets: neutral, warm, and cool.
-- Foreground cutout overlay: import a transparent PNG/WebP to composite foreground elements over the 3D subject.
-- Foreground overlay is included in the WebM export render.
+- Imported video, camera capture, and AI image/video segmentation are processed in the browser.
+- No Reality VFX application backend or remote upload endpoint is configured.
+- The segmentation library downloads model assets from its configured distribution source.
+- Camera streams are stopped when recording ends or the page is closed.
+- Users should avoid selecting sensitive footage on shared devices.
 
-### Manual occlusion workflow
-1. Create a transparent PNG/WebP cutout containing the foreground object (for example, a person or desk edge) with the same framing as the source video.
-2. Import the source video and position the 3D subject.
-3. Load the cutout using **Foreground cutout**. It is layered above the 3D subject so the real-world foreground appears in front.
-4. Adjust the contact-shadow strength and virtual lighting preset, then export.
+## Known limitations
 
-These are manual compositing aids, not automatic AI segmentation or depth estimation. Lighting presets affect the virtual 3D subject only; they do not relight the source footage. The contact shadow is a procedural 2D approximation, not a physically reconstructed shadow.
+This is a browser compositing prototype, not a finished native AR production system. The 3D subject is procedural placeholder geometry. Sampled video cutout is not full-frame-rate segmentation and can exhibit temporal mask jumps. Lighting presets affect only the virtual subject. Contact shadow is a visual approximation. WebM export support and performance vary by browser/device. WebXR hit-test support is not universal; iOS Safari generally uses the manual editor fallback.
 
-## Phase 4: browser AI image cutout
-- Select a still image (up to 12 MB) and run **AI remove background**.
-- The browser loads the ISNet FP16 segmentation model and generates a transparent PNG cutout.
-- The generated cutout is automatically placed in the foreground layer above the 3D subject and included in export.
-- AI inference runs client-side; the selected source image is not uploaded to a Reality VFX backend. First model download requires internet access and may be large; later runs may benefit from browser caching.
+Production AR with stable world anchors, depth occlusion, camera pose recovery, robust relighting, and native camera pipelines requires platform-specific ARCore/ARKit integration and device testing. Those capabilities are not represented as complete in this browser app.
 
-### Scope and limitations
-This feature performs image-level foreground extraction, not video frame segmentation. It does not track moving subjects, create temporally consistent masks, infer scene depth, or generate new video. Processing speed and memory use depend on device capability. Manual transparent PNG/WebP import remains available as a fallback.
+## Security
 
-## Phase 5: sampled AI video foreground extraction
-- Import a video up to 12 seconds and run **AI video cutout**.
-- The browser samples frames at 2 frames per second, scales each to a maximum 512-pixel long edge, and runs the existing ISNet image segmentation model.
-- Timestamped transparent foreground frames are displayed in the preview and composited over the 3D subject during WebM export.
-- Processing runs sequentially in the browser; source footage is not uploaded to a Reality VFX server.
-
-### Constraints
-This is sampled-frame segmentation, not full-frame-rate video AI. At 2 fps, fast motion can show mask jumps or trails between samples. Clip duration is limited to 12 seconds to constrain mobile memory and processing time. The feature requires an internet connection for the initial model download, and processing time depends heavily on the device. For best results, use short clips with a clearly visible subject and stable camera.
+Do not put API keys, signing secrets, or private model credentials in Vite client-side environment variables. Any \`VITE_*\` value is bundled into public client code. A future hosted AI service must use authenticated server-side endpoints, upload limits, retention controls, rate limits, and explicit user consent.

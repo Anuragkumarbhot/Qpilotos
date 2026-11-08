@@ -1,21 +1,25 @@
 {
   "name": "reality-vfx-studio",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "three": "^0.180.0",
-    "@imgly/background-removal": "^1.5.5"
+    "@imgly/background-removal": "^1.5.5",
+    "three": "^0.180.0"
   },
   "devDependencies": {
     "@types/three": "^0.180.0",
+    "@types/webxr": "^0.5.23",
     "typescript": "~5.9.3",
-    "vite": "^7.1.7",
-    "@types/webxr": "^0.5.23"
+    "vite": "^7.1.7"
   }
 }
