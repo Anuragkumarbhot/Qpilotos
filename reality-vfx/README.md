@@ -42,3 +42,16 @@ This phase adds hit-test plane placement, not full world understanding. It does 
 
 ## Privacy
 Camera frames are handled locally in this prototype. The app does not upload footage to an AI service.
+## Phase 3: cinematic compositing tools
+- Soft procedural contact-shadow layer with adjustable opacity, following the 3D subject.
+- Virtual-subject lighting presets: neutral, warm, and cool.
+- Foreground cutout overlay: import a transparent PNG/WebP to composite foreground elements over the 3D subject.
+- Foreground overlay is included in the WebM export render.
+
+### Manual occlusion workflow
+1. Create a transparent PNG/WebP cutout containing the foreground object (for example, a person or desk edge) with the same framing as the source video.
+2. Import the source video and position the 3D subject.
+3. Load the cutout using **Foreground cutout**. It is layered above the 3D subject so the real-world foreground appears in front.
+4. Adjust the contact-shadow strength and virtual lighting preset, then export.
+
+These are manual compositing aids, not automatic AI segmentation or depth estimation. Lighting presets affect the virtual 3D subject only; they do not relight the source footage. The contact shadow is a procedural 2D approximation, not a physically reconstructed shadow.
