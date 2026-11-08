@@ -6,7 +6,7 @@ app.innerHTML = `
   <main class="app">
     <header>
       <div class="brand"><div class="logo">R</div><div><h1>Reality VFX Studio</h1><div class="sub">Mobile-first video compositing prototype</div></div></div>
-      <span class="pill">LOCAL RENDER · PROTOTYPE</span>
+      <span class="pill">AR TRACKING · PWA</span>
     </header>
     <div class="layout">
       <section class="panel">
@@ -17,7 +17,7 @@ app.innerHTML = `
           <div class="empty"><strong>Your scene starts here</strong><span>Record a clip or import a video to add a 3D character.</span></div>
         </div>
         <div class="stage-actions">
-          <button class="primary" id="recordBtn">● Record camera</button>
+          <button class="primary" id="recordBtn">● Record camera</button><button id="arBtn">◎ Start AR</button>
           <button id="importBtn">Import video</button>
           <button id="playBtn" disabled>▶ Play</button>
           <button id="resetBtn">Reset object</button>
@@ -47,7 +47,7 @@ app.innerHTML = `
         </div>
       </aside>
     </div>
-    <footer>Prototype limitations: the 3D subject is a manually placed overlay. There is no automatic camera tracking, real-world occlusion, lighting reconstruction, speech understanding, or AI scene regeneration in this version.</footer>
+    <footer>AR mode uses WebXR hit-test plane detection where supported. Other browsers use the 2D editor fallback. This phase does not provide semantic scene reconstruction, automatic occlusion masks, or generative video.</footer>
   </main>
 `;
 
@@ -77,6 +77,15 @@ let mediaStream: MediaStream | null = null;
 let recordingChunks: Blob[] = [];
 let recorder: MediaRecorder | null = null;
 let dragPointer: number | null = null;
+let xrHitTestSource: XRHitTestSource | null = null;
+let xrReferenceSpace: XRReferenceSpace | null = null;
+let arPlaced = false;
+const arBtn = document.querySelector<HTMLButtonElement>('#arBtn')!;
+const reticle = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.17, 32), new THREE.MeshBasicMaterial({ color: 0xffd45a, side: THREE.DoubleSide }));
+reticle.rotation.x = -Math.PI / 2;
+reticle.matrixAutoUpdate = false;
+reticle.visible = false;
+scene.add(reticle);
 
 function material(color: number, roughness = 0.8) {
   return new THREE.MeshStandardMaterial({ color, roughness });
@@ -142,6 +151,7 @@ function buildSubject(type: string) {
   applyPosition();
 }
 function applyPosition() {
+  if (renderer.xr.isPresenting && arPlaced) { subjectGroup.visible = showObject; return; }
   const x = Number((document.querySelector<HTMLInputElement>('#xpos')!).value) / 100;
   const y = Number((document.querySelector<HTMLInputElement>('#ypos')!).value) / 100;
   subjectGroup.position.set((x - 0.5) * 9.6, (0.5 - y) * 5.8, 0);
@@ -159,16 +169,52 @@ function resize() {
   camera.updateProjectionMatrix();
   compositeCanvas.width = w; compositeCanvas.height = h;
 }
-function render() {
-  requestAnimationFrame(render);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local');
+renderer.setAnimationLoop((_, frame) => {
+  if (frame && xrHitTestSource && xrReferenceSpace) {
+    const hits = frame.getHitTestResults(xrHitTestSource);
+    if (hits.length) {
+      const pose = hits[0].getPose(xrReferenceSpace);
+      if (pose) { reticle.visible = !arPlaced; reticle.matrix.fromArray(pose.transform.matrix); }
+    } else if (!arPlaced) reticle.visible = false;
+  }
   renderer.render(scene, camera);
-}
+});
 new ResizeObserver(resize).observe(stage);
 resize();
-render();
 buildSubject('dino');
 
 function setStatus(message: string) { statusEl.textContent = message; }
+async function startAR() {
+  if (!navigator.xr) { setStatus('WebXR is unavailable here. Use the 2D editor or a supported ARCore Android device in Chrome over HTTPS.'); return; }
+  try {
+    if (!(await navigator.xr.isSessionSupported('immersive-ar'))) { setStatus('This device/browser does not support immersive AR. The web editor remains available.'); return; }
+    const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test'], optionalFeatures: ['local-floor', 'dom-overlay'], domOverlay: { root: document.body } });
+    await renderer.xr.setSession(session);
+    const viewerSpace = await session.requestReferenceSpace('viewer');
+    xrReferenceSpace = await session.requestReferenceSpace('local');
+    xrHitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+    arPlaced = false; subjectGroup.visible = false; reticle.visible = false;
+    arBtn.textContent = 'AR active · tap floor';
+    setStatus('Move your phone slowly to find a surface. Tap the screen to place the 3D subject.');
+    const controller = renderer.xr.getController(0);
+    controller.addEventListener('select', () => {
+      if (!reticle.visible) { setStatus('No surface detected yet. Move the phone to scan the area.'); return; }
+      subjectGroup.position.setFromMatrixPosition(reticle.matrix);
+      subjectGroup.quaternion.setFromRotationMatrix(reticle.matrix);
+      subjectGroup.visible = showObject; arPlaced = true; reticle.visible = false;
+      setStatus('3D subject anchored to the detected surface. Move around to view it.');
+    });
+    scene.add(controller);
+    session.addEventListener('end', () => {
+      xrHitTestSource?.cancel(); xrHitTestSource = null; xrReferenceSpace = null;
+      reticle.visible = false; arPlaced = false; arBtn.textContent = '◎ Start AR';
+      applyPosition(); setStatus('AR session ended. Back in the video editor.');
+    }, { once: true });
+  } catch (error) { setStatus(error instanceof Error ? 'AR could not start: ' + error.message : 'AR session could not start.'); }
+}
+arBtn.addEventListener('click', () => { void startAR(); });
 function setVideoSource(url: string) {
   video.src = url;
   video.style.display = 'block';
