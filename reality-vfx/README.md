@@ -64,3 +64,12 @@ These are manual compositing aids, not automatic AI segmentation or depth estima
 
 ### Scope and limitations
 This feature performs image-level foreground extraction, not video frame segmentation. It does not track moving subjects, create temporally consistent masks, infer scene depth, or generate new video. Processing speed and memory use depend on device capability. Manual transparent PNG/WebP import remains available as a fallback.
+
+## Phase 5: sampled AI video foreground extraction
+- Import a video up to 12 seconds and run **AI video cutout**.
+- The browser samples frames at 2 frames per second, scales each to a maximum 512-pixel long edge, and runs the existing ISNet image segmentation model.
+- Timestamped transparent foreground frames are displayed in the preview and composited over the 3D subject during WebM export.
+- Processing runs sequentially in the browser; source footage is not uploaded to a Reality VFX server.
+
+### Constraints
+This is sampled-frame segmentation, not full-frame-rate video AI. At 2 fps, fast motion can show mask jumps or trails between samples. Clip duration is limited to 12 seconds to constrain mobile memory and processing time. The feature requires an internet connection for the initial model download, and processing time depends heavily on the device. For best results, use short clips with a clearly visible subject and stable camera.
