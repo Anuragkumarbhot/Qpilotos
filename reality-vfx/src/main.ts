@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import * as THREE from 'three';
+import { removeBackground } from '@imgly/background-removal';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -41,7 +42,9 @@ app.innerHTML = `
         <div class="control"><label>Vertical position <output id="yOut">50%</output></label><input id="ypos" type="range" min="10" max="90" step="1" value="62"></div>
         <div class="control"><label>Horizontal position <output id="xOut">50%</output></label><input id="xpos" type="range" min="5" max="95" step="1" value="52"></div>
         <div class="row"><button id="toggleObject">Hide object</button><button id="gridToggle">Show guides</button>
-          <label class="file-control">Foreground cutout<input id="foregroundInput" type="file" accept="image/png,image/webp" /></label></div>
+          <label class="file-control">Foreground cutout<input id="foregroundInput" type="file" accept="image/png,image/webp" /></label>
+          <label class="file-control">AI image cutout<input id="aiCutoutInput" type="file" accept="image/*" /></label>
+          <button id="aiCutoutBtn" disabled>AI remove background</button></div>
         <div>
           <p class="section-title">Cinematic look</p>
           <select id="lighting"><option value="neutral">Neutral daylight</option><option value="warm">Warm sunset</option><option value="cool">Cool moonlight</option></select>
@@ -68,6 +71,9 @@ const exportBtn = document.querySelector<HTMLButtonElement>('#exportBtn')!;
 const compositeCanvas = document.querySelector<HTMLCanvasElement>('#compositeCanvas')!;
 const foregroundLayer = document.querySelector<HTMLImageElement>('#foregroundLayer')!;
 const foregroundInput = document.querySelector<HTMLInputElement>('#foregroundInput')!;
+const aiCutoutInput = document.querySelector<HTMLInputElement>('#aiCutoutInput')!;
+const aiCutoutBtn = document.querySelector<HTMLButtonElement>('#aiCutoutBtn')!;
+let aiCutoutFile: File | null = null;
 const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -403,6 +409,32 @@ async function exportComposite() {
   window.setTimeout(stop, Math.max(1, duration) * 1000 + 500);
 }
 exportBtn.addEventListener('click', () => { void exportComposite(); });
+aiCutoutInput.addEventListener('change', () => {
+  aiCutoutFile = aiCutoutInput.files?.[0] ?? null;
+  aiCutoutBtn.disabled = !aiCutoutFile;
+  if (aiCutoutFile) setStatus('Image selected. Run AI background removal to create a transparent foreground cutout.');
+});
+aiCutoutBtn.addEventListener('click', async () => {
+  if (!aiCutoutFile) return;
+  if (aiCutoutFile.size > 12 * 1024 * 1024) { setStatus('Choose an image under 12 MB for browser-based AI processing.'); return; }
+  aiCutoutBtn.disabled = true;
+  aiCutoutBtn.textContent = 'AI processing…';
+  setStatus('Loading the AI segmentation model. The first run may take time and requires an internet connection.');
+  try {
+    const result = await removeBackground(aiCutoutFile, { model: 'isnet_fp16', output: { format: 'image/png' } });
+    const url = URL.createObjectURL(result);
+    const oldUrl = foregroundLayer.src;
+    foregroundLayer.onload = () => { if (oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl); };
+    foregroundLayer.src = url;
+    foregroundLayer.style.display = 'block';
+    setStatus('AI cutout ready. Transparent foreground layer is now above the 3D subject.');
+  } catch (error) {
+    setStatus(error instanceof Error ? 'AI cutout failed: ' + error.message : 'AI cutout failed. Try a smaller image or manual transparent PNG.');
+  } finally {
+    aiCutoutBtn.disabled = !aiCutoutFile;
+    aiCutoutBtn.textContent = 'AI remove background';
+  }
+});
 foregroundInput.addEventListener('change', () => {
   const file = foregroundInput.files?.[0];
   if (!file) return;
