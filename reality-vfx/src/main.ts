@@ -378,14 +378,16 @@ async function processVideoCutout() {
     if (!workCtx) throw new Error('Canvas processing is unavailable.');
     for (let index = 0; index < count; index++) {
       const time = Math.min(index / frameRate, Math.max(0, video.duration - 0.04));
-      video.currentTime = time;
-      await new Promise<void>((resolve, reject) => {
+      if (Math.abs(video.currentTime - time) > 0.015) {
+        video.currentTime = time;
+        await new Promise<void>((resolve, reject) => {
         const onSeeked = () => { cleanup(); resolve(); };
         const onError = () => { cleanup(); reject(new Error('Could not decode a video frame.')); };
         const cleanup = () => { video.removeEventListener('seeked', onSeeked); video.removeEventListener('error', onError); };
         video.addEventListener('seeked', onSeeked, { once: true });
         video.addEventListener('error', onError, { once: true });
-      });
+        });
+      }
       const factor = Math.min(1, 512 / Math.max(video.videoWidth, video.videoHeight));
       workCanvas.width = Math.max(1, Math.round(video.videoWidth * factor));
       workCanvas.height = Math.max(1, Math.round(video.videoHeight * factor));
