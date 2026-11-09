@@ -61,3 +61,11 @@ Production AR with stable world anchors, depth occlusion, camera pose recovery, 
 ## Security
 
 Do not put API keys, signing secrets, or private model credentials in Vite client-side environment variables. Any \`VITE_*\` value is bundled into public client code. A future hosted AI service must use authenticated server-side endpoints, upload limits, retention controls, rate limits, and explicit user consent.
+
+## Phase 6: temporal cutout transition smoothing
+- Added a **Mask transition smoothing** control for AI video cutout playback and export.
+- Adjacent sampled transparent frames are cross-faded according to their timestamps instead of holding one mask until the next sample.
+- The same compositor function is used for preview and WebM export so the transition setting stays consistent.
+
+### Limitations
+Cross-fading reduces abrupt visual changes but is not optical-flow interpolation or temporal AI tracking. Fast-moving subjects can appear semi-transparent or ghosted between samples. The source segmentation remains sampled at 2 fps.
