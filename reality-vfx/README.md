@@ -87,3 +87,15 @@ This is alpha-centroid tracking with 2D translation compensation, not dense opti
 
 ### Limitations
 The 3D character is still procedural placeholder geometry: movement is screen-space translation and simple bob/turn animation, not skeletal animation, physics-based navigation, or a learned autonomous agent. The video feature tracks and stabilizes extracted foreground silhouettes; it cannot make a recorded person perform new actions, infer full 3D pose, or generate unseen frames. Video cutout remains sampled at 2 fps.
+
+
+## Phase 9: articulated companion agents and local avoidance
+
+- Added up to three procedural companion characters with simple torso, head, arms, and legs.
+- Added alternating limb swing and body bob for a basic walk cycle.
+- Added companion enable/pause and count controls.
+- Added local separation steering to reduce overlap with the main 3D subject and other companions.
+- Companion agents are included in the Three.js scene and therefore appear in the preview and WebM composite.
+
+### Limitations
+These are procedural low-poly agents with deterministic steering, not imported skeletal rigs, physics-driven locomotion, learned AI, or navmesh pathfinding. Avoidance is local separation around nearby characters; it does not understand arbitrary scene geometry. Human video remains alpha-silhouette tracking from sampled cutout frames; full-body pose estimation is not yet implemented.
