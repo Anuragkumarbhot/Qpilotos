@@ -99,3 +99,19 @@ The 3D character is still procedural placeholder geometry: movement is screen-sp
 
 ### Limitations
 These are procedural low-poly agents with deterministic steering, not imported skeletal rigs, physics-driven locomotion, learned AI, or navmesh pathfinding. Avoidance is local separation around nearby characters; it does not understand arbitrary scene geometry. Human video remains alpha-silhouette tracking from sampled cutout frames; full-body pose estimation is not yet implemented.
+
+
+## Gemini AI assistant
+
+Reality VFX includes an optional Gemini-powered scene-planning assistant. The browser calls the local `/api/gemini` endpoint; the Node.js backend calls Google Gemini so the API key is never bundled into client JavaScript.
+
+### Configure locally
+
+1. Create a Google Gemini API key in Google AI Studio.
+2. Copy `.env.example` to `.env` in this directory.
+3. Put the key in `.env` as `GEMINI_API_KEY=...`. Do not commit `.env`, share the key, or use a `VITE_*` variable.
+4. In Termux terminal 1, start the backend: `npm run api`.
+5. In terminal 2, start Vite: `npm run dev -- --host 0.0.0.0`.
+6. Open the Vite URL and use **Gemini AI assistant** in the editor.
+
+Optional server settings: `GEMINI_MODEL` (defaults to `gemini-2.5-flash`) and `API_PORT` (defaults to `3001`). The backend limits prompts to 4,000 characters and applies a basic per-IP request limit. For public deployment, add authentication, persistent distributed rate limiting, abuse monitoring, and HTTPS before exposing this endpoint. The Gemini assistant provides advice; it does not directly manipulate the 3D scene or edit video.
