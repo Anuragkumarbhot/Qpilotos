@@ -78,3 +78,12 @@ Cross-fading reduces abrupt visual changes but is not optical-flow interpolation
 
 ### Limitations
 This is alpha-centroid tracking with 2D translation compensation, not dense optical flow, articulated tracking, camera-motion estimation, or depth-aware occlusion. Large rotations, multiple disconnected subjects, rapid scale changes, and severe segmentation errors can still produce alignment artifacts.
+
+## Phase 8: autonomous character systems
+
+- Added autonomous 3D subject movement with enable/pause control, patrol, wander, idle, and run behaviour presets, plus adjustable movement speed.
+- Added a video human-subject stabilization toggle. When enabled, sampled cutout frames are aligned using the existing alpha-centroid estimates; when disabled, each sampled frame retains its original placement.
+- Preview and WebM export share the same video cutout compositor and stabilization setting.
+
+### Limitations
+The 3D character is still procedural placeholder geometry: movement is screen-space translation and simple bob/turn animation, not skeletal animation, physics-based navigation, or a learned autonomous agent. The video feature tracks and stabilizes extracted foreground silhouettes; it cannot make a recorded person perform new actions, infer full 3D pose, or generate unseen frames. Video cutout remains sampled at 2 fps.
