@@ -850,7 +850,7 @@ function updateAutonomousCharacter(timestamp: number): void {
   }
   const agentsEnabled = query<HTMLInputElement>("#agentsEnabled").checked;
   const avoid = query<HTMLInputElement>("#avoidanceEnabled").checked;
-  companionAgents.forEach((agent, index) => {
+  companionAgents.forEach((agent) => {
     agent.root.visible = agentsEnabled;
     if (!agentsEnabled) return;
     agent.phase += delta * agent.speed * 7;
