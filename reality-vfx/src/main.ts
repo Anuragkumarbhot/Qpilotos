@@ -28,6 +28,7 @@ app.innerHTML = [
   '<div class="row"><button id="toggleObject">Hide subject</button><label class="file-control">Foreground PNG/WebP<input id="foregroundInput" type="file" accept="image/png,image/webp" /></label></div>',
   '<section><p class="section-title">Autonomous AI characters</p><label class="control"><span><input id="autonomyEnabled" type="checkbox" checked /> Enable autonomous 3D movement</span></label><div class="control"><label for="autonomyMode">Behaviour</label><select id="autonomyMode"><option value="patrol">Patrol</option><option value="wander">Wander</option><option value="idle">Idle animation</option><option value="run">Run</option></select></div><div class="control"><label for="autonomySpeed">Movement speed <output id="autonomySpeedOut">1.0×</output></label><input id="autonomySpeed" type="range" min="0.25" max="2.5" step="0.05" value="1" /></div><label class="control"><span><input id="humanTracking" type="checkbox" checked /> Stabilize tracked human in video</span></label><p class="hint">3D autonomy animates the procedural subject. Human tracking aligns sampled transparent video frames; it does not alter a person&apos;s original actions.</p></section><section><p class="section-title">Multi-character AI agents</p><label class="control"><span><input id="agentsEnabled" type="checkbox" checked /> Enable companion agents</span></label><label class="control"><span><input id="avoidanceEnabled" type="checkbox" checked /> Avoid nearby characters</span></label><div class="control"><label for="agentCount">Companion count</label><select id="agentCount"><option value="1">1 companion</option><option value="2" selected>2 companions</option><option value="3">3 companions</option></select></div><p class="hint">Companions use procedural articulated limbs, patrol targets and local separation steering. This is a lightweight browser simulation, not learned AI or navigation mesh pathfinding.</p></section><section><p class="section-title">AI foreground extraction</p><div class="control"><label for="maskBlend">Mask transition smoothing <output id="maskBlendOut">70%</output></label><input id="maskBlend" type="range" min="0" max="100" value="70" /></div><label class="file-control full">Select image<input id="aiCutoutInput" type="file" accept="image/*" /></label><button id="aiCutoutBtn" class="full" disabled>AI remove image background</button><button id="videoCutoutBtn" class="full" disabled>AI video cutout (12 sec max)</button><p class="hint">AI inference runs in this browser. First use downloads model assets and may require substantial memory.</p></section>',
   '<section><p class="section-title">Virtual lighting</p><select id="lighting" aria-label="Lighting preset"><option value="neutral">Neutral daylight</option><option value="warm">Warm sunset</option><option value="cool">Cool moonlight</option></select><div class="control"><label for="shadow">Contact shadow <output id="shadowOut">45%</output></label><input id="shadow" type="range" min="0" max="90" value="45" /></div></section>',
+  '<section class="gemini-panel"><p class="section-title">Gemini AI assistant</p><p class="hint">Ask Gemini to plan VFX scenes, suggest character behaviour, or explain editing steps.</p><textarea id="geminiPrompt" rows="3" maxlength="4000" placeholder="Describe the scene or VFX change you want…"></textarea><button class="full" id="geminiSend">Ask Gemini</button><p class="status" id="geminiStatus" role="status" aria-live="polite">Connect the secure Gemini backend to begin.</p><pre id="geminiReply" class="gemini-reply" aria-live="polite"></pre></section>',
   '<section><p class="section-title">Export</p><button class="primary full" id="exportBtn" disabled>Export WebM composite</button><p class="status" id="status" role="status" aria-live="polite">Import or record a video to begin.</p><p class="hint">Export is real-time WebM. Browser codec support and device performance vary.</p></section>',
   '</aside></div><footer>Reality VFX is a browser compositing prototype. AI video cutout samples frames at 2 fps; it is not full-frame-rate temporal segmentation. WebXR world tracking and depth-aware occlusion are not included in this editor build.</footer></main>'
 ].join('');
@@ -776,6 +777,30 @@ query<HTMLSelectElement>('#lighting').addEventListener('change', (event) => {
     keyLight.intensity = 2.1;
   }
   setStatus('Virtual subject lighting updated. Source footage colors are unchanged.');
+});
+
+const geminiPrompt = query<HTMLTextAreaElement>('#geminiPrompt');
+const geminiSend = query<HTMLButtonElement>('#geminiSend');
+const geminiStatus = query<HTMLParagraphElement>('#geminiStatus');
+const geminiReply = query<HTMLPreElement>('#geminiReply');
+geminiSend.addEventListener('click', async () => {
+  const prompt = geminiPrompt.value.trim();
+  if (!prompt) { geminiStatus.textContent = 'Enter a scene request first.'; return; }
+  geminiSend.disabled = true;
+  geminiStatus.textContent = 'Gemini is thinking…';
+  geminiReply.textContent = '';
+  try {
+    const response = await fetch('/api/gemini', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt })
+    });
+    const data = await response.json() as { text?: string; error?: string };
+    if (!response.ok) throw new Error(data.error || 'Gemini request failed.');
+    geminiReply.textContent = data.text || 'Gemini returned an empty response.';
+    geminiStatus.textContent = 'Response received.';
+  } catch (error) {
+    geminiStatus.textContent = error instanceof Error ? error.message : 'Unable to contact Gemini backend.';
+  } finally { geminiSend.disabled = false; }
 });
 
 const shadowSlider = query<HTMLInputElement>('#shadow');
