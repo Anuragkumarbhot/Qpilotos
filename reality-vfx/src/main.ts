@@ -26,7 +26,7 @@ app.innerHTML = [
   '<div class="control"><label for="xpos">Horizontal position <output id="xOut">52%</output></label><input id="xpos" type="range" min="5" max="95" step="1" value="52" /></div>',
   '<div class="control"><label for="ypos">Vertical position <output id="yOut">62%</output></label><input id="ypos" type="range" min="10" max="90" step="1" value="62" /></div>',
   '<div class="row"><button id="toggleObject">Hide subject</button><label class="file-control">Foreground PNG/WebP<input id="foregroundInput" type="file" accept="image/png,image/webp" /></label></div>',
-  '<section><p class="section-title">AI foreground extraction</p><div class="control"><label for="maskBlend">Mask transition smoothing <output id="maskBlendOut">70%</output></label><input id="maskBlend" type="range" min="0" max="100" value="70" /></div><label class="file-control full">Select image<input id="aiCutoutInput" type="file" accept="image/*" /></label><button id="aiCutoutBtn" class="full" disabled>AI remove image background</button><button id="videoCutoutBtn" class="full" disabled>AI video cutout (12 sec max)</button><p class="hint">AI inference runs in this browser. First use downloads model assets and may require substantial memory.</p></section>',
+  '<section><p class="section-title">Autonomous AI characters</p><label class="control"><span><input id="autonomyEnabled" type="checkbox" checked /> Enable autonomous 3D movement</span></label><div class="control"><label for="autonomyMode">Behaviour</label><select id="autonomyMode"><option value="patrol">Patrol</option><option value="wander">Wander</option><option value="idle">Idle animation</option><option value="run">Run</option></select></div><div class="control"><label for="autonomySpeed">Movement speed <output id="autonomySpeedOut">1.0×</output></label><input id="autonomySpeed" type="range" min="0.25" max="2.5" step="0.05" value="1" /></div><label class="control"><span><input id="humanTracking" type="checkbox" checked /> Stabilize tracked human in video</span></label><p class="hint">3D autonomy animates the procedural subject. Human tracking aligns sampled transparent video frames; it does not alter a person's original actions.</p></section><section><p class="section-title">AI foreground extraction</p><div class="control"><label for="maskBlend">Mask transition smoothing <output id="maskBlendOut">70%</output></label><input id="maskBlend" type="range" min="0" max="100" value="70" /></div><label class="file-control full">Select image<input id="aiCutoutInput" type="file" accept="image/*" /></label><button id="aiCutoutBtn" class="full" disabled>AI remove image background</button><button id="videoCutoutBtn" class="full" disabled>AI video cutout (12 sec max)</button><p class="hint">AI inference runs in this browser. First use downloads model assets and may require substantial memory.</p></section>',
   '<section><p class="section-title">Virtual lighting</p><select id="lighting" aria-label="Lighting preset"><option value="neutral">Neutral daylight</option><option value="warm">Warm sunset</option><option value="cool">Cool moonlight</option></select><div class="control"><label for="shadow">Contact shadow <output id="shadowOut">45%</output></label><input id="shadow" type="range" min="0" max="90" value="45" /></div></section>',
   '<section><p class="section-title">Export</p><button class="primary full" id="exportBtn" disabled>Export WebM composite</button><p class="status" id="status" role="status" aria-live="polite">Import or record a video to begin.</p><p class="hint">Export is real-time WebM. Browser codec support and device performance vary.</p></section>',
   '</aside></div><footer>Reality VFX is a browser compositing prototype. AI video cutout samples frames at 2 fps; it is not full-frame-rate temporal segmentation. WebXR world tracking and depth-aware occlusion are not included in this editor build.</footer></main>'
@@ -65,9 +65,11 @@ let selectedAiImage: File | null = null;
 let showSubject = true;
 let dragPointer: number | null = null;
 type TrackedCutoutFrame = { time: number; bitmap: ImageBitmap; centerX: number; centerY: number };
+type AutonomousState = { enabled: boolean; mode: string; speed: number; phase: number; targetX: number; direction: number; lastTime: number };
 let videoCutoutFrames: TrackedCutoutFrame[] = [];
 let videoCutoutReady = false;
 let exportStop: (() => void) | null = null;
+const autonomy: AutonomousState = { enabled: true, mode: "patrol", speed: 1, phase: 0, targetX: -3.2, direction: 1, lastTime: 0 };
 
 const renderer = new THREE.WebGLRenderer({
   canvas: glCanvas,
@@ -276,12 +278,9 @@ function drawTemporalCutout(ctx: CanvasRenderingContext2D, width: number, height
   const span = right ? Math.max(0.001, right.time - left.time) : 0;
   const progress = right ? THREE.MathUtils.clamp((time - left.time) / span, 0, 1) : 0;
   const tracking = right ? progress : 0;
-  const targetX = right
-    ? THREE.MathUtils.lerp(left.centerX, right.centerX, tracking)
-    : left.centerX;
-  const targetY = right
-    ? THREE.MathUtils.lerp(left.centerY, right.centerY, tracking)
-    : left.centerY;
+  const trackingEnabled = query<HTMLInputElement>("#humanTracking").checked;
+  const targetX = trackingEnabled ? (right ? THREE.MathUtils.lerp(left.centerX, right.centerX, tracking) : left.centerX) : 0.5;
+  const targetY = trackingEnabled ? (right ? THREE.MathUtils.lerp(left.centerY, right.centerY, tracking) : left.centerY) : 0.5;
   ctx.save();
   if (right && strength > 0) {
     ctx.globalAlpha = 1 - progress * strength;
@@ -741,9 +740,58 @@ window.addEventListener('beforeunload', () => {
   renderer.dispose();
 });
 
+function updateAutonomousCharacter(timestamp: number): void {
+  const delta = autonomy.lastTime ? Math.min(0.05, (timestamp - autonomy.lastTime) / 1000) : 0;
+  autonomy.lastTime = timestamp;
+  autonomy.phase += delta * autonomy.speed * (autonomy.mode === "run" ? 9 : 4);
+  if (autonomy.enabled) {
+    const baseY = Number(query<HTMLInputElement>("#ypos").value);
+    const baseX = Number(query<HTMLInputElement>("#xpos").value);
+    if (autonomy.mode === "patrol" || autonomy.mode === "wander" || autonomy.mode === "run") {
+      const pace = (autonomy.mode === "run" ? 34 : autonomy.mode === "wander" ? 14 : 20) * autonomy.speed;
+      let nextX = baseX + autonomy.direction * pace * delta;
+      if (nextX > 88 || nextX < 12) {
+        autonomy.direction *= -1;
+        nextX = THREE.MathUtils.clamp(nextX, 12, 88);
+      }
+      query<HTMLInputElement>("#xpos").value = String(nextX);
+      subject.rotation.z = autonomy.direction < 0 ? Math.PI : 0;
+      subject.position.x = (nextX / 100 - 0.5) * 9.2;
+      subject.position.y = (0.5 - baseY / 100) * 5.75 + Math.sin(autonomy.phase * 2) * (autonomy.mode === "run" ? 0.16 : 0.06);
+      contactShadow.position.x = subject.position.x;
+      contactShadow.position.y = subject.position.y - 1.25;
+    } else if (autonomy.mode === "idle") {
+      subject.position.y = (0.5 - baseY / 100) * 5.75 + Math.sin(autonomy.phase) * 0.08;
+      subject.rotation.z = Math.sin(autonomy.phase * 0.5) * 0.06;
+    }
+  }
+  renderScene();
+  requestAnimationFrame(updateAutonomousCharacter);
+}
+query<HTMLInputElement>("#autonomyEnabled").addEventListener("change", (event) => {
+  autonomy.enabled = (event.currentTarget as HTMLInputElement).checked;
+  autonomy.lastTime = 0;
+  setStatus(autonomy.enabled ? "Autonomous 3D character movement enabled." : "Autonomous movement paused.");
+});
+query<HTMLSelectElement>("#autonomyMode").addEventListener("change", (event) => {
+  autonomy.mode = (event.currentTarget as HTMLSelectElement).value;
+  autonomy.direction = 1;
+  setStatus("Autonomous character behaviour: " + autonomy.mode + ".");
+});
+query<HTMLInputElement>("#autonomySpeed").addEventListener("input", (event) => {
+  autonomy.speed = Number((event.currentTarget as HTMLInputElement).value);
+  query<HTMLOutputElement>("#autonomySpeedOut").textContent = autonomy.speed.toFixed(2) + "×";
+});
+query<HTMLInputElement>("#humanTracking").addEventListener("change", () => {
+  renderVideoCutoutPreview();
+  setStatus(query<HTMLInputElement>("#humanTracking").checked
+    ? "Human video subject stabilization enabled."
+    : "Human video subject stabilization disabled; original frame position preserved.");
+});
 buildSubject('dino');
 updateLabels();
 resizeRenderer();
+requestAnimationFrame(updateAutonomousCharacter);
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
