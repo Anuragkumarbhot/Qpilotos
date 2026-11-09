@@ -64,7 +64,8 @@ let recordingChunks: Blob[] = [];
 let selectedAiImage: File | null = null;
 let showSubject = true;
 let dragPointer: number | null = null;
-let videoCutoutFrames: Array<{ time: number; bitmap: ImageBitmap }> = [];
+type TrackedCutoutFrame = { time: number; bitmap: ImageBitmap; centerX: number; centerY: number };
+let videoCutoutFrames: TrackedCutoutFrame[] = [];
 let videoCutoutReady = false;
 let exportStop: (() => void) | null = null;
 
@@ -216,6 +217,53 @@ function clearVideoCutouts(): void {
   videoCutoutCtx.clearRect(0, 0, videoCutoutCanvas.width, videoCutoutCanvas.height);
 }
 
+async function measureSubjectCenter(bitmap: ImageBitmap): Promise<{ centerX: number; centerY: number }> {
+  const sample = document.createElement('canvas');
+  sample.width = bitmap.width;
+  sample.height = bitmap.height;
+  const sampleContext = sample.getContext('2d', { willReadFrequently: true });
+  if (!sampleContext) return { centerX: 0.5, centerY: 0.5 };
+  sampleContext.drawImage(bitmap, 0, 0);
+  const pixels = sampleContext.getImageData(0, 0, sample.width, sample.height).data;
+  let total = 0;
+  let weightedX = 0;
+  let weightedY = 0;
+  for (let y = 0; y < sample.height; y += 2) {
+    for (let x = 0; x < sample.width; x += 2) {
+      const alpha = pixels[(y * sample.width + x) * 4 + 3] / 255;
+      if (alpha < 0.12) continue;
+      total += alpha;
+      weightedX += (x / Math.max(1, sample.width - 1)) * alpha;
+      weightedY += (y / Math.max(1, sample.height - 1)) * alpha;
+    }
+  }
+  return total > 0
+    ? { centerX: weightedX / total, centerY: weightedY / total }
+    : { centerX: 0.5, centerY: 0.5 };
+}
+
+function drawTrackedCutout(
+  ctx: CanvasRenderingContext2D,
+  frame: TrackedCutoutFrame,
+  width: number,
+  height: number,
+  targetX: number,
+  targetY: number
+): void {
+  const scale = Math.min(width / frame.bitmap.width, height / frame.bitmap.height);
+  const drawWidth = frame.bitmap.width * scale;
+  const drawHeight = frame.bitmap.height * scale;
+  const offsetX = (targetX - frame.centerX) * drawWidth;
+  const offsetY = (targetY - frame.centerY) * drawHeight;
+  ctx.drawImage(
+    frame.bitmap,
+    (width - drawWidth) / 2 + offsetX,
+    (height - drawHeight) / 2 + offsetY,
+    drawWidth,
+    drawHeight
+  );
+}
+
 function drawTemporalCutout(ctx: CanvasRenderingContext2D, width: number, height: number, time: number): void {
   if (!videoCutoutReady || videoCutoutFrames.length === 0) return;
   let left = videoCutoutFrames[0];
@@ -227,12 +275,22 @@ function drawTemporalCutout(ctx: CanvasRenderingContext2D, width: number, height
   const strength = Number(query<HTMLInputElement>('#maskBlend').value) / 100;
   const span = right ? Math.max(0.001, right.time - left.time) : 0;
   const progress = right ? THREE.MathUtils.clamp((time - left.time) / span, 0, 1) : 0;
+  const tracking = right ? progress : 0;
+  const targetX = right
+    ? THREE.MathUtils.lerp(left.centerX, right.centerX, tracking)
+    : left.centerX;
+  const targetY = right
+    ? THREE.MathUtils.lerp(left.centerY, right.centerY, tracking)
+    : left.centerY;
   ctx.save();
-  ctx.globalAlpha = 1;
-  drawContained(ctx, left.bitmap, left.bitmap.width, left.bitmap.height, width, height);
   if (right && strength > 0) {
+    ctx.globalAlpha = 1 - progress * strength;
+    drawTrackedCutout(ctx, left, width, height, targetX, targetY);
     ctx.globalAlpha = progress * strength;
-    drawContained(ctx, right.bitmap, right.bitmap.width, right.bitmap.height, width, height);
+    drawTrackedCutout(ctx, right, width, height, targetX, targetY);
+  } else {
+    ctx.globalAlpha = 1;
+    drawTrackedCutout(ctx, left, width, height, targetX, targetY);
   }
   ctx.restore();
 }
@@ -303,7 +361,7 @@ async function processVideoCutout(): Promise<void> {
   const wasPaused = video.paused;
   const previousTime = video.currentTime;
   const frameCount = Math.max(1, Math.ceil(video.duration * AI_SAMPLE_FPS));
-  const generated: Array<{ time: number; bitmap: ImageBitmap }> = [];
+  const generated: TrackedCutoutFrame[] = [];
   videoCutoutBtn.disabled = true;
   videoCutoutBtn.textContent = 'Processing AI frames…';
   video.pause();
@@ -324,7 +382,9 @@ async function processVideoCutout(): Promise<void> {
         workCanvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not encode sampled frame.')), 'image/jpeg', 0.86);
       });
       const cutout = await removeBackground(frameBlob, { model: 'isnet_fp16', output: { format: 'image/png' } });
-      generated.push({ time, bitmap: await createImageBitmap(cutout) });
+      const bitmap = await createImageBitmap(cutout);
+      const center = await measureSubjectCenter(bitmap);
+      generated.push({ time, bitmap, ...center });
       setStatus('AI video cutout: ' + (index + 1) + ' / ' + frameCount + ' frames (' + Math.round((index + 1) / frameCount * 100) + '%).');
     }
 
