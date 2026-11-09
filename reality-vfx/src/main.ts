@@ -26,7 +26,7 @@ app.innerHTML = [
   '<div class="control"><label for="xpos">Horizontal position <output id="xOut">52%</output></label><input id="xpos" type="range" min="5" max="95" step="1" value="52" /></div>',
   '<div class="control"><label for="ypos">Vertical position <output id="yOut">62%</output></label><input id="ypos" type="range" min="10" max="90" step="1" value="62" /></div>',
   '<div class="row"><button id="toggleObject">Hide subject</button><label class="file-control">Foreground PNG/WebP<input id="foregroundInput" type="file" accept="image/png,image/webp" /></label></div>',
-  '<section><p class="section-title">Autonomous AI characters</p><label class="control"><span><input id="autonomyEnabled" type="checkbox" checked /> Enable autonomous 3D movement</span></label><div class="control"><label for="autonomyMode">Behaviour</label><select id="autonomyMode"><option value="patrol">Patrol</option><option value="wander">Wander</option><option value="idle">Idle animation</option><option value="run">Run</option></select></div><div class="control"><label for="autonomySpeed">Movement speed <output id="autonomySpeedOut">1.0×</output></label><input id="autonomySpeed" type="range" min="0.25" max="2.5" step="0.05" value="1" /></div><label class="control"><span><input id="humanTracking" type="checkbox" checked /> Stabilize tracked human in video</span></label><p class="hint">3D autonomy animates the procedural subject. Human tracking aligns sampled transparent video frames; it does not alter a person's original actions.</p></section><section><p class="section-title">AI foreground extraction</p><div class="control"><label for="maskBlend">Mask transition smoothing <output id="maskBlendOut">70%</output></label><input id="maskBlend" type="range" min="0" max="100" value="70" /></div><label class="file-control full">Select image<input id="aiCutoutInput" type="file" accept="image/*" /></label><button id="aiCutoutBtn" class="full" disabled>AI remove image background</button><button id="videoCutoutBtn" class="full" disabled>AI video cutout (12 sec max)</button><p class="hint">AI inference runs in this browser. First use downloads model assets and may require substantial memory.</p></section>',
+  '<section><p class="section-title">Autonomous AI characters</p><label class="control"><span><input id="autonomyEnabled" type="checkbox" checked /> Enable autonomous 3D movement</span></label><div class="control"><label for="autonomyMode">Behaviour</label><select id="autonomyMode"><option value="patrol">Patrol</option><option value="wander">Wander</option><option value="idle">Idle animation</option><option value="run">Run</option></select></div><div class="control"><label for="autonomySpeed">Movement speed <output id="autonomySpeedOut">1.0×</output></label><input id="autonomySpeed" type="range" min="0.25" max="2.5" step="0.05" value="1" /></div><label class="control"><span><input id="humanTracking" type="checkbox" checked /> Stabilize tracked human in video</span></label><p class="hint">3D autonomy animates the procedural subject. Human tracking aligns sampled transparent video frames; it does not alter a person's original actions.</p></section><section><p class="section-title">Multi-character AI agents</p><label class="control"><span><input id="agentsEnabled" type="checkbox" checked /> Enable companion agents</span></label><label class="control"><span><input id="avoidanceEnabled" type="checkbox" checked /> Avoid nearby characters</span></label><div class="control"><label for="agentCount">Companion count</label><select id="agentCount"><option value="1">1 companion</option><option value="2" selected>2 companions</option><option value="3">3 companions</option></select></div><p class="hint">Companions use procedural articulated limbs, patrol targets and local separation steering. This is a lightweight browser simulation, not learned AI or navigation mesh pathfinding.</p></section><section><p class="section-title">AI foreground extraction</p><div class="control"><label for="maskBlend">Mask transition smoothing <output id="maskBlendOut">70%</output></label><input id="maskBlend" type="range" min="0" max="100" value="70" /></div><label class="file-control full">Select image<input id="aiCutoutInput" type="file" accept="image/*" /></label><button id="aiCutoutBtn" class="full" disabled>AI remove image background</button><button id="videoCutoutBtn" class="full" disabled>AI video cutout (12 sec max)</button><p class="hint">AI inference runs in this browser. First use downloads model assets and may require substantial memory.</p></section>',
   '<section><p class="section-title">Virtual lighting</p><select id="lighting" aria-label="Lighting preset"><option value="neutral">Neutral daylight</option><option value="warm">Warm sunset</option><option value="cool">Cool moonlight</option></select><div class="control"><label for="shadow">Contact shadow <output id="shadowOut">45%</output></label><input id="shadow" type="range" min="0" max="90" value="45" /></div></section>',
   '<section><p class="section-title">Export</p><button class="primary full" id="exportBtn" disabled>Export WebM composite</button><p class="status" id="status" role="status" aria-live="polite">Import or record a video to begin.</p><p class="hint">Export is real-time WebM. Browser codec support and device performance vary.</p></section>',
   '</aside></div><footer>Reality VFX is a browser compositing prototype. AI video cutout samples frames at 2 fps; it is not full-frame-rate temporal segmentation. WebXR world tracking and depth-aware occlusion are not included in this editor build.</footer></main>'
@@ -70,6 +70,9 @@ let videoCutoutFrames: TrackedCutoutFrame[] = [];
 let videoCutoutReady = false;
 let exportStop: (() => void) | null = null;
 const autonomy: AutonomousState = { enabled: true, mode: "patrol", speed: 1, phase: 0, targetX: -3.2, direction: 1, lastTime: 0 };
+type CompanionAgent = { root: THREE.Group; leftLeg: THREE.Group; rightLeg: THREE.Group; leftArm: THREE.Group; rightArm: THREE.Group; phase: number; direction: number; speed: number; targetX: number; color: number };
+const companionAgents: CompanionAgent[] = [];
+
 
 const renderer = new THREE.WebGLRenderer({
   canvas: glCanvas,
@@ -165,6 +168,55 @@ function buildSubject(kind: string): void {
   applyPosition();
 }
 
+function createCompanion(index: number): CompanionAgent {
+  const root = new THREE.Group();
+  const colors = [0x62c8e8, 0xf0a45b, 0xa78bfa];
+  const color = colors[index % colors.length];
+  const material = new THREE.MeshStandardMaterial({ color, roughness: 0.68 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x273449, roughness: 0.8 });
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 0.52, 4, 8), material);
+  torso.position.y = 0.18;
+  root.add(torso);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 12), material);
+  head.position.y = 0.72;
+  root.add(head);
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), dark);
+  eye.position.set(0.09, 0.75, 0.205);
+  root.add(eye);
+  const makeLimb = (x: number, y: number, length: number, arm: boolean): THREE.Group => {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, y, 0);
+    const limb = new THREE.Mesh(new THREE.CapsuleGeometry(arm ? 0.075 : 0.09, length, 3, 6), arm ? material : dark);
+    limb.position.y = -length * 0.42;
+    pivot.add(limb);
+    root.add(pivot);
+    return pivot;
+  };
+  const leftLeg = makeLimb(-0.13, -0.18, 0.48, false);
+  const rightLeg = makeLimb(0.13, -0.18, 0.48, false);
+  const leftArm = makeLimb(-0.29, 0.38, 0.42, true);
+  const rightArm = makeLimb(0.29, 0.38, 0.42, true);
+  root.position.set(-2.4 + index * 1.6, -1.8, 0.35 + index * 0.02);
+  scene.add(root);
+  return { root, leftLeg, rightLeg, leftArm, rightArm, phase: index * 1.7, direction: index % 2 ? -1 : 1, speed: 0.65 + index * 0.12, targetX: root.position.x, color };
+}
+function initializeCompanions(): void {
+  companionAgents.forEach((agent) => {
+    scene.remove(agent.root);
+    agent.root.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        object.geometry.dispose();
+        const material = object.material;
+        if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+        else material.dispose();
+      }
+    });
+  });
+  companionAgents.length = 0;
+  for (let index = 0; index < Number(query<HTMLSelectElement>("#agentCount").value); index += 1) {
+    companionAgents.push(createCompanion(index));
+  }
+}
 function applyPosition(): void {
   const x = Number(query<HTMLInputElement>('#xpos').value);
   const y = Number(query<HTMLInputElement>('#ypos').value);
@@ -771,6 +823,47 @@ function updateAutonomousCharacter(timestamp: number): void {
       subject.rotation.z = Math.sin(autonomy.phase * 0.5) * 0.06;
     }
   }
+  const agentsEnabled = query<HTMLInputElement>("#agentsEnabled").checked;
+  const avoid = query<HTMLInputElement>("#avoidanceEnabled").checked;
+  companionAgents.forEach((agent, index) => {
+    agent.root.visible = agentsEnabled;
+    if (!agentsEnabled) return;
+    agent.phase += delta * agent.speed * 7;
+    let vx = agent.direction * agent.speed;
+    let vy = Math.sin(agent.phase * 0.35) * 0.12;
+    if (avoid) {
+      const dx = agent.root.position.x - subject.position.x;
+      const dy = agent.root.position.y - subject.position.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance < 1.45 && distance > 0.001) {
+        vx += (dx / distance) * (1.45 - distance) * 2.2;
+        vy += (dy / distance) * (1.45 - distance) * 2.2;
+      }
+      companionAgents.forEach((other) => {
+        if (other === agent) return;
+        const sx = agent.root.position.x - other.root.position.x;
+        const sy = agent.root.position.y - other.root.position.y;
+        const separation = Math.hypot(sx, sy);
+        if (separation < 0.85 && separation > 0.001) {
+          vx += (sx / separation) * (0.85 - separation) * 1.8;
+          vy += (sy / separation) * (0.85 - separation) * 1.8;
+        }
+      });
+    }
+    agent.root.position.x += vx * delta;
+    agent.root.position.y += vy * delta;
+    if (agent.root.position.x > 4.5 || agent.root.position.x < -4.5) {
+      agent.direction *= -1;
+      agent.root.position.x = THREE.MathUtils.clamp(agent.root.position.x, -4.5, 4.5);
+    }
+    agent.root.rotation.z = vx < -0.01 ? Math.PI : vx > 0.01 ? 0 : agent.root.rotation.z;
+    const stride = Math.sin(agent.phase) * 0.48;
+    agent.leftLeg.rotation.z = stride;
+    agent.rightLeg.rotation.z = -stride;
+    agent.leftArm.rotation.z = -stride * 0.65;
+    agent.rightArm.rotation.z = stride * 0.65;
+    agent.root.position.y += Math.sin(agent.phase * 2) * delta * 0.035;
+  });
   renderScene();
   requestAnimationFrame(updateAutonomousCharacter);
 }
@@ -788,6 +881,13 @@ query<HTMLInputElement>("#autonomySpeed").addEventListener("input", (event) => {
   autonomy.speed = Number((event.currentTarget as HTMLInputElement).value);
   query<HTMLOutputElement>("#autonomySpeedOut").textContent = autonomy.speed.toFixed(2) + "×";
 });
+query<HTMLSelectElement>("#agentCount").addEventListener("change", initializeCompanions);
+query<HTMLInputElement>("#agentsEnabled").addEventListener("change", (event) => {
+  setStatus((event.currentTarget as HTMLInputElement).checked ? "Companion agents enabled." : "Companion agents paused.");
+});
+query<HTMLInputElement>("#avoidanceEnabled").addEventListener("change", (event) => {
+  setStatus((event.currentTarget as HTMLInputElement).checked ? "Local character separation enabled." : "Local character separation disabled.");
+});
 query<HTMLInputElement>("#humanTracking").addEventListener("change", () => {
   renderVideoCutoutPreview();
   setStatus(query<HTMLInputElement>("#humanTracking").checked
@@ -795,6 +895,7 @@ query<HTMLInputElement>("#humanTracking").addEventListener("change", () => {
     : "Human video subject stabilization disabled; original frame position preserved.");
 });
 buildSubject('dino');
+initializeCompanions();
 updateLabels();
 resizeRenderer();
 requestAnimationFrame(updateAutonomousCharacter);
