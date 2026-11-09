@@ -26,7 +26,7 @@ app.innerHTML = [
   '<div class="control"><label for="xpos">Horizontal position <output id="xOut">52%</output></label><input id="xpos" type="range" min="5" max="95" step="1" value="52" /></div>',
   '<div class="control"><label for="ypos">Vertical position <output id="yOut">62%</output></label><input id="ypos" type="range" min="10" max="90" step="1" value="62" /></div>',
   '<div class="row"><button id="toggleObject">Hide subject</button><label class="file-control">Foreground PNG/WebP<input id="foregroundInput" type="file" accept="image/png,image/webp" /></label></div>',
-  '<section><p class="section-title">AI foreground extraction</p><label class="file-control full">Select image<input id="aiCutoutInput" type="file" accept="image/*" /></label><button id="aiCutoutBtn" class="full" disabled>AI remove image background</button><button id="videoCutoutBtn" class="full" disabled>AI video cutout (12 sec max)</button><p class="hint">AI inference runs in this browser. First use downloads model assets and may require substantial memory.</p></section>',
+  '<section><p class="section-title">AI foreground extraction</p><div class="control"><label for="maskBlend">Mask transition smoothing <output id="maskBlendOut">70%</output></label><input id="maskBlend" type="range" min="0" max="100" value="70" /></div><label class="file-control full">Select image<input id="aiCutoutInput" type="file" accept="image/*" /></label><button id="aiCutoutBtn" class="full" disabled>AI remove image background</button><button id="videoCutoutBtn" class="full" disabled>AI video cutout (12 sec max)</button><p class="hint">AI inference runs in this browser. First use downloads model assets and may require substantial memory.</p></section>',
   '<section><p class="section-title">Virtual lighting</p><select id="lighting" aria-label="Lighting preset"><option value="neutral">Neutral daylight</option><option value="warm">Warm sunset</option><option value="cool">Cool moonlight</option></select><div class="control"><label for="shadow">Contact shadow <output id="shadowOut">45%</output></label><input id="shadow" type="range" min="0" max="90" value="45" /></div></section>',
   '<section><p class="section-title">Export</p><button class="primary full" id="exportBtn" disabled>Export WebM composite</button><p class="status" id="status" role="status" aria-live="polite">Import or record a video to begin.</p><p class="hint">Export is real-time WebM. Browser codec support and device performance vary.</p></section>',
   '</aside></div><footer>Reality VFX is a browser compositing prototype. AI video cutout samples frames at 2 fps; it is not full-frame-rate temporal segmentation. WebXR world tracking and depth-aware occlusion are not included in this editor build.</footer></main>'
@@ -216,15 +216,29 @@ function clearVideoCutouts(): void {
   videoCutoutCtx.clearRect(0, 0, videoCutoutCanvas.width, videoCutoutCanvas.height);
 }
 
+function drawTemporalCutout(ctx: CanvasRenderingContext2D, width: number, height: number, time: number): void {
+  if (!videoCutoutReady || videoCutoutFrames.length === 0) return;
+  let left = videoCutoutFrames[0];
+  let right: typeof left | null = null;
+  for (const frame of videoCutoutFrames) {
+    if (frame.time <= time) left = frame;
+    else { right = frame; break; }
+  }
+  const strength = Number(query<HTMLInputElement>('#maskBlend').value) / 100;
+  const span = right ? Math.max(0.001, right.time - left.time) : 0;
+  const progress = right ? THREE.MathUtils.clamp((time - left.time) / span, 0, 1) : 0;
+  ctx.save();
+  ctx.globalAlpha = 1;
+  drawContained(ctx, left.bitmap, left.bitmap.width, left.bitmap.height, width, height);
+  if (right && strength > 0) {
+    ctx.globalAlpha = progress * strength;
+    drawContained(ctx, right.bitmap, right.bitmap.width, right.bitmap.height, width, height);
+  }
+  ctx.restore();
+}
 function renderVideoCutoutPreview(): void {
   videoCutoutCtx.clearRect(0, 0, videoCutoutCanvas.width, videoCutoutCanvas.height);
-  if (!videoCutoutReady || videoCutoutFrames.length === 0) return;
-  let selected = videoCutoutFrames[0];
-  for (const frame of videoCutoutFrames) {
-    if (frame.time <= video.currentTime) selected = frame;
-    else break;
-  }
-  drawContained(videoCutoutCtx, selected.bitmap, selected.bitmap.width, selected.bitmap.height, videoCutoutCanvas.width, videoCutoutCanvas.height);
+  drawTemporalCutout(videoCutoutCtx, videoCutoutCanvas.width, videoCutoutCanvas.height, video.currentTime);
 }
 
 function revokeSourceUrl(): void {
@@ -385,14 +399,7 @@ async function exportComposite(): Promise<void> {
     if (foregroundLayer.complete && foregroundLayer.naturalWidth > 0) {
       drawContained(context, foregroundLayer, foregroundLayer.naturalWidth, foregroundLayer.naturalHeight, width, height);
     }
-    if (videoCutoutReady && videoCutoutFrames.length) {
-      let frame = videoCutoutFrames[0];
-      for (const candidate of videoCutoutFrames) {
-        if (candidate.time <= video.currentTime) frame = candidate;
-        else break;
-      }
-      drawContained(context, frame.bitmap, frame.bitmap.width, frame.bitmap.height, width, height);
-    }
+    drawTemporalCutout(context, width, height, video.currentTime);
     if (!stopped && output.state === 'recording' && !video.ended) animationFrame = requestAnimationFrame(draw);
   };
 
@@ -518,6 +525,10 @@ video.addEventListener('loadedmetadata', () => {
   videoCutoutBtn.disabled = !Number.isFinite(video.duration) || video.duration > MAX_AI_CLIP_SECONDS;
 });
 video.addEventListener('timeupdate', renderVideoCutoutPreview);
+query<HTMLInputElement>('#maskBlend').addEventListener('input', () => {
+  query<HTMLOutputElement>('#maskBlendOut').textContent = query<HTMLInputElement>('#maskBlend').value + '%';
+  renderVideoCutoutPreview();
+});
 video.addEventListener('error', () => setStatus('The selected video could not be decoded by this browser.'));
 
 query<HTMLButtonElement>('#resetBtn').addEventListener('click', () => {
