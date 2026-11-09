@@ -284,12 +284,18 @@ function drawTemporalCutout(ctx: CanvasRenderingContext2D, width: number, height
   ctx.save();
   if (right && strength > 0) {
     ctx.globalAlpha = 1 - progress * strength;
-    drawTrackedCutout(ctx, left, width, height, targetX, targetY);
+    drawTrackedCutout(ctx, left, width, height,
+      trackingEnabled ? targetX : left.centerX,
+      trackingEnabled ? targetY : left.centerY);
     ctx.globalAlpha = progress * strength;
-    drawTrackedCutout(ctx, right, width, height, targetX, targetY);
+    drawTrackedCutout(ctx, right, width, height,
+      trackingEnabled ? targetX : right.centerX,
+      trackingEnabled ? targetY : right.centerY);
   } else {
     ctx.globalAlpha = 1;
-    drawTrackedCutout(ctx, left, width, height, targetX, targetY);
+    drawTrackedCutout(ctx, left, width, height,
+      trackingEnabled ? targetX : left.centerX,
+      trackingEnabled ? targetY : left.centerY);
   }
   ctx.restore();
 }
