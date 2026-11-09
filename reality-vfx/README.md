@@ -69,3 +69,12 @@ Do not put API keys, signing secrets, or private model credentials in Vite clien
 
 ### Limitations
 Cross-fading reduces abrupt visual changes but is not optical-flow interpolation or temporal AI tracking. Fast-moving subjects can appear semi-transparent or ghosted between samples. The source segmentation remains sampled at 2 fps.
+
+## Phase 7: motion-aware subject tracking
+- Each AI cutout frame now estimates the foreground subject's alpha-weighted center.
+- During transitions, adjacent cutouts are aligned to an interpolated subject center before blending, reducing visible double-image ghosting caused by simple whole-frame cross-fades.
+- The same tracked compositor is used for preview and WebM export.
+- Center estimation samples every second pixel and ignores very low-alpha pixels to keep browser processing bounded.
+
+### Limitations
+This is alpha-centroid tracking with 2D translation compensation, not dense optical flow, articulated tracking, camera-motion estimation, or depth-aware occlusion. Large rotations, multiple disconnected subjects, rapid scale changes, and severe segmentation errors can still produce alignment artifacts.
